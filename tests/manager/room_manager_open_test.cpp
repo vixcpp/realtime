@@ -1,0 +1,1216 @@
+/**
+ *
+ * @file room_manager_open_test.cpp
+ * @author Gaspard Kirira
+ * @brief Tests for opening rooms through the Vix Realtime room manager.
+ *
+ * Copyright 2026, Gaspard Kirira. All rights reserved.
+ * https://github.com/vixcpp/vix
+ * Use of this source code is governed by a MIT license
+ * that can be found in the License file.
+ *
+ * Vix.cpp
+ *
+ */
+
+#include <gtest/gtest.h>
+
+#include <concepts>
+#include <cstddef>
+#include <memory>
+#include <string>
+#include <string_view>
+#include <type_traits>
+#include <utility>
+#include <vector>
+
+#include <vix/realtime/command_result.hpp>
+#include <vix/realtime/config.hpp>
+#include <vix/realtime/errors.hpp>
+#include <vix/realtime/memory_event_store.hpp>
+#include <vix/realtime/memory_snapshot_store.hpp>
+#include <vix/realtime/node_id.hpp>
+#include <vix/realtime/room.hpp>
+#include <vutility>
+#include <vector>
+
+#include <vix/realtime/command_result.hpp>
+#include <vix/realtime/config.hpp>
+#include <vix/realtime/errors.hpp>
+#include <vix/realtime/mix/realtime/room_command.hpp>
+#include <vix/realtime/room_context.hpp>
+#include <vix/realtime/room_event.hpp>
+#include <vix/realtime/room_handler.hpp>
+#include <vix/realtime/room_id.hpp>
+#include <vix/realtime/room_manager.hpp>
+#include <vix/realtime/room_state.hpp>
+#include <vix/realtime/types.hpp>
+
+namespace vix::realtime
+{
+  namespace
+  {
+    template <typename>
+    inline constexpr bool dependentFalse = false;
+
+    class EmptyState final : public RoomState
+    {
+    public:
+      [[nodiscard]] SchemaVersion
+      schema_version() const noexcept override
+      {
+        return SchemaVersion{1};
+      }
+
+      void apply(
+          const RoomEvent &) override
+      {
+      }
+
+      [[nodiscard]] JsonObject
+      serialize() const override
+      {
+        return {};
+      }
+
+      void restore(
+          const JsonObject &,
+          SchemaVersion) override
+      {
+      }
+
+      [[nodiscard]] std::unique_ptr<RoomState>
+      clone() const override
+      {
+        return std::make_unique<EmptyState>(
+            *this);
+      }
+    };
+
+    class EmptyHandler final : public RoomHandler
+    {
+    public:
+      [[nodiscard]] CommandResult handle_command(
+          const RoomCommand &,
+          const RoomState &,
+          const RoomContext &) override
+      {
+        return CommandResult::ignored();
+      }
+    };
+
+    struct FactoryProbe
+    {
+      std::size_t callCount{0};
+      std::vector<RoomId> createdRooms{};
+      bool fail{false};
+    };
+
+    template <typename ConfigType>
+    void set_maximum_active_rooms(
+        ConfigType &config,
+        std::size_t value)
+    {
+      if constexpr (
+          requires {
+            config.maxActiveRooms = value;
+          })
+      {
+        config.maxActiveRooms =
+            value;
+      }
+      else if constexpr (
+          requires {
+            config.maxRooms = value;
+          })
+      {
+        config.maxRooms =
+            value;
+      }
+      else if constexpr (
+          requires {
+            config.maximumActiveRooms =
+                value;
+          })
+      {
+        config.maximumActiveRooms =
+            value;
+      }
+      else
+      {
+        static_assert(
+            dependentFalse<ConfigType>,
+            "Unsupported active room configuration field");
+      }
+    }
+
+    template <
+        typename ManagerType,
+        typename SharedFactory,
+        typename UniqueFactory>
+    [[nodiscard]] std::unique_ptr<ManagerType>
+    construct_manager(
+        const Config &config,
+        const NodeId &nodeId,
+        const std::shared_ptr<MemoryEventStore>
+            &eventStore,
+        const std::shared_ptr<MemorySnapshotStore>
+            &snapshotStore,
+        const SharedFactory &sharedFactory,
+        const UniqueFactory &uniqueFactory)
+    {
+      if constexpr (
+          std::constructible_from<
+              ManagerType,
+              NodeId,
+              SharedFactory,
+              Config>)
+      {
+        return std::make_unique<
+            ManagerType>(
+            nodeId,
+            sharedFactory,
+            config);
+      }
+      else if constexpr (
+          std::constructible_from<
+              ManagerType,
+              NodeId,
+              UniqueFactory,
+              Config>)
+      {
+        return std::make_unique<
+            ManagerType>(
+            nodeId,
+            uniqueFactory,
+            config);
+      }
+      else if constexpr (
+          std::constructible_from<
+              ManagerType,
+              Config,
+              NodeId,
+              SharedFactory>)
+      {
+        return std::make_unique<
+            ManagerType>(
+            config,
+            nodeId,
+            sharedFactory);
+      }
+      else if constexpr (
+          std::constructible_from<
+              ManagerType,
+              Config,
+              NodeId,
+              UniqueFactory>)
+      {
+        return std::make_unique<
+            ManagerType>(
+            config,
+            nodeId,
+            uniqueFactory);
+      }
+      else if constexpr (
+          std::constructible_from<
+              ManagerType,
+              NodeId,
+              Config,
+              SharedFactory>)
+      {
+        return std::make_unique<
+            ManagerType>(
+            nodeId,
+            config,
+            sharedFactory);
+      }
+      else if constexpr (
+          std::constructible_from<
+              ManagerType,
+              NodeId,
+              Config,
+              UniqueFactory>)
+      {
+        return std::make_unique<
+            ManagerType>(
+            nodeId,
+            config,
+            uniqueFactory);
+      }
+      else if constexpr (
+          std::constructible_from<
+              ManagerType,
+              Config,
+              SharedFactory,
+              NodeId>)
+      {
+        return std::make_unique<
+            ManagerType>(
+            config,
+            sharedFactory,
+            nodeId);
+      }
+      else if constexpr (
+          std::constructible_from<
+              ManagerType,
+              Config,
+              UniqueFactory,
+              NodeId>)
+      {
+        return std::make_unique<
+            ManagerType>(
+            config,
+            uniqueFactory,
+            nodeId);
+      }
+      else if constexpr (
+          std::constructible_from<
+              ManagerType,
+              Config,
+              NodeId,
+              std::shared_ptr<
+                  MemoryEventStore>,
+              std::shared_ptr<
+                  MemorySnapshotStore>,
+              SharedFactory>)
+      {
+        return std::make_unique<
+            ManagerType>(
+            config,
+            nodeId,
+            eventStore,
+            snapshotStore,
+            sharedFactory);
+      }
+      else if constexpr (
+          std::constructible_from<
+              ManagerType,
+              Config,
+              NodeId,
+              std::shared_ptr<
+                  MemoryEventStore>,
+              std::shared_ptr<
+                  MemorySnapshotStore>,
+              UniqueFactory>)
+      {
+        return std::make_unique<
+            ManagerType>(
+            config,
+            nodeId,
+            eventStore,
+            snapshotStore,
+            uniqueFactory);
+      }
+      else if constexpr (
+          std::constructible_from<
+              ManagerType,
+              Config,
+              NodeId,
+              SharedFactory,
+              std::shared_ptr<
+                  MemoryEventStore>,
+              std::shared_ptr<
+                  MemorySnapshotStore>>)
+      {
+        return std::make_unique<
+            ManagerType>(
+            config,
+            nodeId,
+            sharedFactory,
+            eventStore,
+            snapshotStore);
+      }
+      else if constexpr (
+          std::constructible_from<
+              ManagerType,
+              Config,
+              NodeId,
+              UniqueFactory,
+              std::shared_ptr<
+                  MemoryEventStore>,
+              std::shared_ptr<
+                  MemorySnapshotStore>>)
+      {
+        return std::make_unique<
+            ManagerType>(
+            config,
+            nodeId,
+            uniqueFactory,
+            eventStore,
+            snapshotStore);
+      }
+      else if constexpr (
+          std::constructible_from<
+              ManagerType,
+              NodeId,
+              SharedFactory,
+              std::shared_ptr<
+                  MemoryEventStore>,
+              std::shared_ptr<
+                  MemorySnapshotStore>,
+              Config>)
+      {
+        return std::make_unique<
+            ManagerType>(
+            nodeId,
+            sharedFactory,
+            eventStore,
+            snapshotStore,
+            config);
+      }
+      else if constexpr (
+          std::constructible_from<
+              ManagerType,
+              NodeId,
+              UniqueFactory,
+              std::shared_ptr<
+                  MemoryEventStore>,
+              std::shared_ptr<
+                  MemorySnapshotStore>,
+              Config>)
+      {
+        return std::make_unique<
+            ManagerType>(
+            nodeId,
+            uniqueFactory,
+            eventStore,
+            snapshotStore,
+            config);
+      }
+      else if constexpr (
+          std::constructible_from<
+              ManagerType,
+              NodeId,
+              SharedFactory>)
+      {
+        return std::make_unique<
+            ManagerType>(
+            nodeId,
+            sharedFactory);
+      }
+      else if constexpr (
+          std::constructible_from<
+              ManagerType,
+              NodeId,
+              UniqueFactory>)
+      {
+        return std::make_unique<
+            ManagerType>(
+            nodeId,
+            uniqueFactory);
+      }
+      else if constexpr (
+          std::constructible_from<
+              ManagerType,
+              Config,
+              SharedFactory>)
+      {
+        return std::make_unique<
+            ManagerType>(
+            config,
+            sharedFactory);
+      }
+      else if constexpr (
+          std::constructible_from<
+              ManagerType,
+              Config,
+              UniqueFactory>)
+      {
+        return std::make_unique<
+            ManagerType>(
+            config,
+            uniqueFactory);
+      }
+      else
+      {
+        static_assert(
+            dependentFalse<ManagerType>,
+            "Unsupported RoomManager constructor API");
+      }
+    }
+
+    template <typename ValueType>
+    [[nodiscard]] const Room *
+    room_pointer(
+        const ValueType &value)
+    {
+      using Value =
+          std::remove_cvref_t<
+              ValueType>;
+
+      if constexpr (
+          std::is_pointer_v<Value>)
+      {
+        return value;
+      }
+      else if constexpr (
+          std::same_as<
+              Value,
+              Room>)
+      {
+        return &value;
+      }
+      else if constexpr (
+          requires {
+            value.has_value();
+            *value;
+          })
+      {
+        if (!value.has_value())
+        {
+          return nullptr;
+        }
+
+        return room_pointer(
+            *value);
+      }
+      else if constexpr (
+          requires {
+            {
+              value.get()
+            } -> std::convertible_to<
+                const Room *>;
+          })
+      {
+        return value.get();
+      }
+      else if constexpr (
+          requires {
+            {
+              value.operator->()
+            } -> std::convertible_to<
+                const Room *>;
+          })
+      {
+        return value.operator->();
+      }
+      else if constexpr (
+          requires {
+            value.lock();
+          })
+      {
+        const auto locked =
+            value.lock();
+
+        return locked.get();
+      }
+      else
+      {
+        static_assert(
+            dependentFalse<Value>,
+            "Unsupported managed room handle");
+      }
+    }
+
+    template <typename ManagerType>
+    [[nodiscard]] const Room *
+    open_managed_room(
+        ManagerType &manager,
+        const RoomId &roomId)
+    {
+      if constexpr (
+          requires {
+            manager.open(
+                roomId);
+          })
+      {
+        decltype(auto) result =
+            manager.open(
+                roomId);
+
+        return room_pointer(
+            result);
+      }
+      else if constexpr (
+          requires {
+            manager.open_room(
+                roomId);
+          })
+      {
+        decltype(auto) result =
+            manager.open_room(
+                roomId);
+
+        return room_pointer(
+            result);
+      }
+      else
+      {
+        static_assert(
+            dependentFalse<ManagerType>,
+            "Unsupported RoomManager open API");
+      }
+    }
+
+    template <typename ManagerType>
+    [[nodiscard]] const Room *
+    get_or_open_managed_room(
+        ManagerType &manager,
+        const RoomId &roomId)
+    {
+      if constexpr (
+          requires {
+            manager.get_or_open(
+                roomId);
+          })
+      {
+        decltype(auto) result =
+            manager.get_or_open(
+                roomId);
+
+        return room_pointer(
+            result);
+      }
+      else if constexpr (
+          requires {
+            manager.get_or_open_room(
+                roomId);
+          })
+      {
+        decltype(auto) result =
+            manager.get_or_open_room(
+                roomId);
+
+        return room_pointer(
+            result);
+      }
+      else
+      {
+        static_assert(
+            dependentFalse<ManagerType>,
+            "Unsupported RoomManager get_or_open API");
+      }
+    }
+
+    template <typename ManagerType>
+    [[nodiscard]] const Room *
+    find_managed_room(
+        const ManagerType &manager,
+        const RoomId &roomId)
+    {
+      if constexpr (
+          requires {
+            manager.find(
+                roomId);
+          })
+      {
+        decltype(auto) result =
+            manager.find(
+                roomId);
+
+        return room_pointer(
+            result);
+      }
+      else if constexpr (
+          requires {
+            manager.find_room(
+                roomId);
+          })
+      {
+        decltype(auto) result =
+            manager.find_room(
+                roomId);
+
+        return room_pointer(
+            result);
+      }
+      else if constexpr (
+          requires {
+            manager.get(
+                roomId);
+          })
+      {
+        decltype(auto) result =
+            manager.get(
+                roomId);
+
+        return room_pointer(
+            result);
+      }
+      else if constexpr (
+          requires {
+            manager.directory()
+                .find(
+                    roomId);
+          })
+      {
+        decltype(auto) result =
+            manager.directory()
+                .find(
+                    roomId);
+
+        return room_pointer(
+            result);
+      }
+      else
+      {
+        static_assert(
+            dependentFalse<ManagerType>,
+            "Unsupported RoomManager lookup API");
+      }
+    }
+
+    template <typename ManagerType>
+    [[nodiscard]] std::size_t
+    active_room_count(
+        const ManagerType &manager)
+    {
+      if constexpr (
+          requires {
+            manager.active_room_count();
+          })
+      {
+        return static_cast<std::size_t>(
+            manager.active_room_count());
+      }
+      else if constexpr (
+          requires {
+            manager.room_count();
+          })
+      {
+        return static_cast<std::size_t>(
+            manager.room_count());
+      }
+      else if constexpr (
+          requires {
+            manager.size();
+          })
+      {
+        return static_cast<std::size_t>(
+            manager.size());
+      }
+      else if constexpr (
+          requires {
+            manager.directory()
+                .size();
+          })
+      {
+        return static_cast<std::size_t>(
+            manager.directory()
+                .size());
+      }
+      else
+      {
+        static_assert(
+            dependentFalse<ManagerType>,
+            "Unsupported RoomManager room count API");
+      }
+    }
+
+    struct ManagerFixture
+    {
+      Config config{};
+      NodeId nodeId{
+          std::string_view{
+              "node-1"}};
+
+      std::shared_ptr<MemoryEventStore>
+          eventStore{
+              std::make_shared<
+                  MemoryEventStore>()};
+
+      std::shared_ptr<MemorySnapshotStore>
+          snapshotStore{
+              std::make_shared<
+                  MemorySnapshotStore>()};
+
+      std::shared_ptr<FactoryProbe>
+          probe{
+              std::make_shared<
+                  FactoryProbe>()};
+
+      std::unique_ptr<RoomManager>
+          manager{};
+    };
+
+    [[nodiscard]] RoomId make_room_id(
+        std::string_view value)
+    {
+      return RoomId{
+          value};
+    }
+
+    [[nodiscard]] ManagerFixture
+    make_fixture(
+        std::size_t maximumActiveRooms = 8)
+    {
+      ManagerFixture fixture;
+
+      set_maximum_active_rooms(
+          fixture.config,
+          maximumActiveRooms);
+
+      const auto sharedFactory =
+          [probe = fixture.probe,
+           eventStore =
+               fixture.eventStore,
+           snapshotStore =
+               fixture.snapshotStore,
+           config =
+               fixture.config](
+              const RoomId &roomId,
+              auto &&...)
+          -> std::shared_ptr<Room>
+      {
+        ++probe->callCount;
+
+        probe->createdRooms.push_back(
+            roomId);
+
+        if (probe->fail)
+        {
+          throw Error{
+              ErrorCode::InternalError,
+              "room factory failed"};
+        }
+
+        return std::make_shared<Room>(
+            roomId,
+            std::make_unique<
+                EmptyState>(),
+            std::make_unique<
+                EmptyHandler>(),
+            eventStore,
+            snapshotStore,
+            config);
+      };
+
+      const auto uniqueFactory =
+          [probe = fixture.probe,
+           eventStore =
+               fixture.eventStore,
+           snapshotStore =
+               fixture.snapshotStore,
+           config =
+               fixture.config](
+              const RoomId &roomId,
+              auto &&...)
+          -> std::unique_ptr<Room>
+      {
+        ++probe->callCount;
+
+        probe->createdRooms.push_back(
+            roomId);
+
+        if (probe->fail)
+        {
+          throw Error{
+              ErrorCode::InternalError,
+              "room factory failed"};
+        }
+
+        return std::make_unique<Room>(
+            roomId,
+            std::make_unique<
+                EmptyState>(),
+            std::make_unique<
+                EmptyHandler>(),
+            eventStore,
+            snapshotStore,
+            config);
+      };
+
+      fixture.manager =
+          construct_manager<RoomManager>(
+              fixture.config,
+              fixture.nodeId,
+              fixture.eventStore,
+              fixture.snapshotStore,
+              sharedFactory,
+              uniqueFactory);
+
+      return fixture;
+    }
+
+    [[nodiscard]] bool opening_is_rejected(
+        RoomManager &manager,
+        const RoomId &roomId)
+    {
+      try
+      {
+        return open_managed_room(
+                   manager,
+                   roomId) == nullptr;
+      }
+      catch (const Error &)
+      {
+        return true;
+      }
+    }
+
+    TEST(RoomManagerOpenTest, OpensRoom)
+    {
+      ManagerFixture fixture =
+          make_fixture();
+
+      const RoomId roomId =
+          make_room_id(
+              "room/main");
+
+      const Room *room =
+          open_managed_room(
+              *fixture.manager,
+              roomId);
+
+      ASSERT_NE(
+          room,
+          nullptr);
+
+      EXPECT_EQ(
+          room->id(),
+          roomId);
+
+      EXPECT_TRUE(
+          room->is_open());
+
+      EXPECT_EQ(
+          room->status(),
+          RoomStatus::Open);
+    }
+
+    TEST(RoomManagerOpenTest, InvokesFactoryOnce)
+    {
+      ManagerFixture fixture =
+          make_fixture();
+
+      const RoomId roomId =
+          make_room_id(
+              "room/main");
+
+      ASSERT_NE(
+          open_managed_room(
+              *fixture.manager,
+              roomId),
+          nullptr);
+
+      EXPECT_EQ(
+          fixture.probe->callCount,
+          1U);
+
+      ASSERT_EQ(
+          fixture.probe
+              ->createdRooms
+              .size(),
+          1U);
+
+      EXPECT_EQ(
+          fixture.probe
+              ->createdRooms
+              .front(),
+          roomId);
+    }
+
+    TEST(RoomManagerOpenTest, RegistersOpenedRoom)
+    {
+      ManagerFixture fixture =
+          make_fixture();
+
+      const RoomId roomId =
+          make_room_id(
+              "room/main");
+
+      const Room *opened =
+          open_managed_room(
+              *fixture.manager,
+              roomId);
+
+      ASSERT_NE(
+          opened,
+          nullptr);
+
+      const Room *found =
+          find_managed_room(
+              *fixture.manager,
+              roomId);
+
+      ASSERT_NE(
+          found,
+          nullptr);
+
+      EXPECT_EQ(
+          found,
+          opened);
+
+      EXPECT_EQ(
+          active_room_count(
+              *fixture.manager),
+          1U);
+    }
+
+    TEST(RoomManagerOpenTest, GetOrOpenCreatesMissingRoom)
+    {
+      ManagerFixture fixture =
+          make_fixture();
+
+      const RoomId roomId =
+          make_room_id(
+              "room/main");
+
+      ASSERT_EQ(
+          find_managed_room(
+              *fixture.manager,
+              roomId),
+          nullptr);
+
+      const Room *room =
+          get_or_open_managed_room(
+              *fixture.manager,
+              roomId);
+
+      ASSERT_NE(
+          room,
+          nullptr);
+
+      EXPECT_TRUE(
+          room->is_open());
+
+      EXPECT_EQ(
+          room->id(),
+          roomId);
+
+      EXPECT_EQ(
+          fixture.probe->callCount,
+          1U);
+
+      EXPECT_EQ(
+          active_room_count(
+              *fixture.manager),
+          1U);
+    }
+
+    TEST(RoomManagerOpenTest, GetOrOpenReusesActiveRoom)
+    {
+      ManagerFixture fixture =
+          make_fixture();
+
+      const RoomId roomId =
+          make_room_id(
+              "room/main");
+
+      const Room *first =
+          get_or_open_managed_room(
+              *fixture.manager,
+              roomId);
+
+      const Room *second =
+          get_or_open_managed_room(
+              *fixture.manager,
+              roomId);
+
+      ASSERT_NE(
+          first,
+          nullptr);
+
+      ASSERT_NE(
+          second,
+          nullptr);
+
+      EXPECT_EQ(
+          second,
+          first);
+
+      EXPECT_EQ(
+          fixture.probe->callCount,
+          1U);
+
+      EXPECT_EQ(
+          active_room_count(
+              *fixture.manager),
+          1U);
+    }
+
+    TEST(RoomManagerOpenTest, OpensMultipleIndependentRooms)
+    {
+      ManagerFixture fixture =
+          make_fixture();
+
+      const RoomId firstId =
+          make_room_id(
+              "room/first");
+
+      const RoomId secondId =
+          make_room_id(
+              "room/second");
+
+      const Room *first =
+          open_managed_room(
+              *fixture.manager,
+              firstId);
+
+      const Room *second =
+          open_managed_room(
+              *fixture.manager,
+              secondId);
+
+      ASSERT_NE(
+          first,
+          nullptr);
+
+      ASSERT_NE(
+          second,
+          nullptr);
+
+      EXPECT_NE(
+          first,
+          second);
+
+      EXPECT_EQ(
+          first->id(),
+          firstId);
+
+      EXPECT_EQ(
+          second->id(),
+          secondId);
+
+      EXPECT_TRUE(
+          first->is_open());
+
+      EXPECT_TRUE(
+          second->is_open());
+
+      EXPECT_EQ(
+          active_room_count(
+              *fixture.manager),
+          2U);
+
+      EXPECT_EQ(
+          fixture.probe->callCount,
+          2U);
+    }
+
+    TEST(RoomManagerOpenTest, OpeningRoomDoesNotCreateEvents)
+    {
+      ManagerFixture fixture =
+          make_fixture();
+
+      const RoomId roomId =
+          make_room_id(
+              "room/main");
+
+      ASSERT_NE(
+          open_managed_room(
+              *fixture.manager,
+              roomId),
+          nullptr);
+
+      EXPECT_EQ(
+          fixture.eventStore->count(
+              roomId),
+          0U);
+    }
+
+    TEST(RoomManagerOpenTest, OpeningFreshRoomDoesNotCreateSnapshot)
+    {
+      ManagerFixture fixture =
+          make_fixture();
+
+      const RoomId roomId =
+          make_room_id(
+              "room/main");
+
+      ASSERT_NE(
+          open_managed_room(
+              *fixture.manager,
+              roomId),
+          nullptr);
+
+      EXPECT_EQ(
+          fixture.snapshotStore->count(
+              roomId),
+          0U);
+    }
+
+    TEST(RoomManagerOpenTest, FailedFactoryDoesNotRegisterRoom)
+    {
+      ManagerFixture fixture =
+          make_fixture();
+
+      fixture.probe->fail = true;
+
+      const RoomId roomId =
+          make_room_id(
+              "room/failing");
+
+      EXPECT_TRUE(
+          opening_is_rejected(
+              *fixture.manager,
+              roomId));
+
+      EXPECT_EQ(
+          find_managed_room(
+              *fixture.manager,
+              roomId),
+          nullptr);
+
+      EXPECT_EQ(
+          active_room_count(
+              *fixture.manager),
+          0U);
+
+      EXPECT_EQ(
+          fixture.probe->callCount,
+          1U);
+    }
+
+    TEST(RoomManagerOpenTest, EnforcesMaximumActiveRoomLimit)
+    {
+      ManagerFixture fixture =
+          make_fixture(
+              2);
+
+      const RoomId firstId =
+          make_room_id(
+              "room/first");
+
+      const RoomId secondId =
+          make_room_id(
+              "room/second");
+
+      const RoomId thirdId =
+          make_room_id(
+              "room/third");
+
+      ASSERT_NE(
+          open_managed_room(
+              *fixture.manager,
+              firstId),
+          nullptr);
+
+      ASSERT_NE(
+          open_managed_room(
+              *fixture.manager,
+              secondId),
+          nullptr);
+
+      EXPECT_TRUE(
+          opening_is_rejected(
+              *fixture.manager,
+              thirdId));
+
+      EXPECT_EQ(
+          active_room_count(
+              *fixture.manager),
+          2U);
+
+      EXPECT_NE(
+          find_managed_room(
+              *fixture.manager,
+              firstId),
+          nullptr);
+
+      EXPECT_NE(
+          find_managed_room(
+              *fixture.manager,
+              secondId),
+          nullptr);
+
+      EXPECT_EQ(
+          find_managed_room(
+              *fixture.manager,
+              thirdId),
+          nullptr);
+    }
+
+  } // namespace
+
+} // namespace vix::realtime
