@@ -75,14 +75,14 @@ option(
   OFF
 )
 
-option(
-  VIX_REALTIME_ENABLE_INSTALL
-  "Generate install rules for the realtime standalone package"
-  OFF
-)
-
 if(NOT VIX_REALTIME_ENABLE_INSTALL)
   set(CMAKE_SKIP_INSTALL_RULES TRUE)
+endif()
+
+if(VIX_UMBRELLA_BUILD)
+  set(VIX_REALTIME_EXPORT_SET VixTargets)
+else()
+  set(VIX_REALTIME_EXPORT_SET VixRealtimeTargets)
 endif()
 
 # --------------------------------------------------------------------
@@ -454,27 +454,29 @@ if(VIX_REALTIME_ENABLE_INSTALL)
     "${CMAKE_INSTALL_LIBDIR}/cmake/vix_realtime"
   )
 
-  configure_package_config_file(
-    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/vix_realtimeConfig.cmake.in"
-    "${CMAKE_CURRENT_BINARY_DIR}/vix_realtimeConfig.cmake"
-    INSTALL_DESTINATION
-      "${VIX_REALTIME_INSTALL_CMAKEDIR}"
-    NO_SET_AND_CHECK_MACRO
-  )
+  if(NOT VIX_UMBRELLA_BUILD)
+    configure_package_config_file(
+      "${CMAKE_CURRENT_SOURCE_DIR}/cmake/vix_realtimeConfig.cmake.in"
+      "${CMAKE_CURRENT_BINARY_DIR}/vix_realtimeConfig.cmake"
+      INSTALL_DESTINATION
+        "${VIX_REALTIME_INSTALL_CMAKEDIR}"
+      NO_SET_AND_CHECK_MACRO
+    )
 
-  write_basic_package_version_file(
-    "${CMAKE_CURRENT_BINARY_DIR}/vix_realtimeConfigVersion.cmake"
-    VERSION
-      ${PROJECT_VERSION}
-    COMPATIBILITY
-      SameMajorVersion
-  )
+    write_basic_package_version_file(
+      "${CMAKE_CURRENT_BINARY_DIR}/vix_realtimeConfigVersion.cmake"
+      VERSION
+        ${PROJECT_VERSION}
+      COMPATIBILITY
+        SameMajorVersion
+    )
+  endif()
 
   install(
     TARGETS
       vix_realtime
     EXPORT
-      VixRealtimeTargets
+      ${VIX_REALTIME_EXPORT_SET}
     ARCHIVE DESTINATION
       ${CMAKE_INSTALL_LIBDIR}
     LIBRARY DESTINATION
@@ -485,24 +487,28 @@ if(VIX_REALTIME_ENABLE_INSTALL)
       ${CMAKE_INSTALL_INCLUDEDIR}
   )
 
-  install(
-    EXPORT
-      VixRealtimeTargets
-    FILE
-      VixRealtimeTargets.cmake
-    NAMESPACE
-      vix::
-    DESTINATION
-      "${VIX_REALTIME_INSTALL_CMAKEDIR}"
-  )
+  if(NOT VIX_UMBRELLA_BUILD)
+    install(
+      EXPORT
+        VixRealtimeTargets
+      FILE
+        VixRealtimeTargets.cmake
+      NAMESPACE
+        vix::
+      DESTINATION
+        "${VIX_REALTIME_INSTALL_CMAKEDIR}"
+    )
+  endif()
 
-  install(
-    FILES
-      "${CMAKE_CURRENT_BINARY_DIR}/vix_realtimeConfig.cmake"
-      "${CMAKE_CURRENT_BINARY_DIR}/vix_realtimeConfigVersion.cmake"
-    DESTINATION
-      "${VIX_REALTIME_INSTALL_CMAKEDIR}"
-  )
+  if(NOT VIX_UMBRELLA_BUILD)
+    install(
+      FILES
+        "${CMAKE_CURRENT_BINARY_DIR}/vix_realtimeConfig.cmake"
+        "${CMAKE_CURRENT_BINARY_DIR}/vix_realtimeConfigVersion.cmake"
+      DESTINATION
+        "${VIX_REALTIME_INSTALL_CMAKEDIR}"
+    )
+  endif()
 
   if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/include")
     install(

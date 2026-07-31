@@ -26,6 +26,7 @@
 #include <type_traits>
 #include <unordered_map>
 #include <vector>
+#include <concepts>
 
 #include <vix/realtime/api.hpp>
 #include <vix/realtime/command_result.hpp>
@@ -50,6 +51,55 @@
 
 namespace vix::realtime
 {
+  namespace internal
+  {
+    template <typename>
+    inline constexpr bool dependentFalse = false;
+
+    template <typename Factory>
+    concept RoomFactoryWithConfigShared =
+        requires(
+            Factory &factory,
+            const RoomId &roomId,
+            const Config &config) {
+          {
+            factory(roomId, config)
+          } -> std::same_as<RoomPtr>;
+        };
+
+    template <typename Factory>
+    concept RoomFactoryWithConfigUnique =
+        requires(
+            Factory &factory,
+            const RoomId &roomId,
+            const Config &config) {
+          {
+            factory(roomId, config)
+          } -> std::same_as<std::unique_ptr<Room>>;
+        };
+
+    template <typename Factory>
+    concept RoomFactoryShared =
+        requires(
+            Factory &factory,
+            const RoomId &roomId) {
+          {
+            factory(roomId)
+          } -> std::same_as<RoomPtr>;
+        };
+
+    template <typename Factory>
+    concept RoomFactoryUnique =
+        requires(
+            Factory &factory,
+            const RoomId &roomId) {
+          {
+            factory(roomId)
+          } -> std::same_as<std::unique_ptr<Room>>;
+        };
+
+  } // namespace internal
+
   /**
    * @brief Central orchestrator for rooms, sessions, presence, and delivery.
    *
@@ -186,6 +236,16 @@ namespace vix::realtime
         Factory factory,
         bool replace = false)
     {
+      using FactoryType =
+          std::remove_cvref_t<Factory>;
+
+      static_assert(
+          internal::RoomFactoryWithConfigShared<FactoryType> ||
+              internal::RoomFactoryWithConfigUnique<FactoryType> ||
+              internal::RoomFactoryShared<FactoryType> ||
+              internal::RoomFactoryUnique<FactoryType>,
+          "Unsupported RoomManager direct factory");
+
       if (!RoomFactory::is_valid_type(roomType))
       {
         throw Error{
@@ -199,54 +259,48 @@ namespace vix::realtime
               const Config &config) mutable -> RoomPtr
       {
         if constexpr (
-            requires {
-              {
-                factory(roomId, config)
-              } -> std::same_as<RoomPtr>;
-            })
+            internal::RoomFactoryWithConfigShared<FactoryType>)
         {
-          return factory(roomId, config);
+          return factory(
+              roomId,
+              config);
         }
         else if constexpr (
-            requires {
-              {
-                factory(roomId, config)
-              } -> std::same_as<std::unique_ptr<Room>>;
-            })
+            internal::RoomFactoryWithConfigUnique<FactoryType>)
         {
           return RoomPtr{
-              factory(roomId, config).release()};
+              factory(
+                  roomId,
+                  config)
+                  .release()};
         }
         else if constexpr (
-            requires {
-              {
-                factory(roomId)
-              } -> std::same_as<RoomPtr>;
-            })
+            internal::RoomFactoryShared<FactoryType>)
         {
-          return factory(roomId);
+          return factory(
+              roomId);
         }
         else if constexpr (
-            requires {
-              {
-                factory(roomId)
-              } -> std::same_as<std::unique_ptr<Room>>;
-            })
+            internal::RoomFactoryUnique<FactoryType>)
         {
           return RoomPtr{
-              factory(roomId).release()};
+              factory(
+                  roomId)
+                  .release()};
         }
         else
         {
           static_assert(
-              sizeof(Factory) == 0,
+              internal::dependentFalse<FactoryType>,
               "Unsupported RoomManager direct factory");
         }
       };
 
-      std::lock_guard<std::mutex> lock{mutex_};
+      std::lock_guard<std::mutex> lock{
+          mutex_};
 
-      std::string key{roomType};
+      std::string key{
+          roomType};
 
       if (!replace &&
           (factories_.contains(key) ||
@@ -255,14 +309,15 @@ namespace vix::realtime
         return false;
       }
 
-      factories_.erase(key);
+      factories_.erase(
+          key);
+
       directFactories_.insert_or_assign(
           std::move(key),
           std::move(adapter));
 
       return true;
     }
-
     /**
      * @brief Remove one room factory from the registry.
      *
