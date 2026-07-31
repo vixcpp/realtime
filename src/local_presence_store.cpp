@@ -248,7 +248,11 @@ namespace vix::realtime
          roomIterator->second)
     {
       static_cast<void>(sessionId);
-      result.push_back(presence);
+      if (presence.status() !=
+          PresenceStatus::Left)
+      {
+        result.push_back(presence);
+      }
     }
 
     std::sort(
@@ -288,8 +292,12 @@ namespace vix::realtime
 
       if (presenceIterator != presences.end())
       {
-        result.push_back(
-            presenceIterator->second);
+        if (presenceIterator->second.status() !=
+            PresenceStatus::Left)
+        {
+          result.push_back(
+              presenceIterator->second);
+        }
       }
     }
 
@@ -424,7 +432,15 @@ namespace vix::realtime
       return 0;
     }
 
-    return iterator->second.size();
+    return static_cast<std::size_t>(
+        std::count_if(
+            iterator->second.begin(),
+            iterator->second.end(),
+            [](const auto &entry)
+            {
+              return entry.second.status() !=
+                     PresenceStatus::Left;
+            }));
   }
 
   std::size_t LocalPresenceStore::count() const

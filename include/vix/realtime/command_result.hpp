@@ -288,7 +288,7 @@ namespace vix::realtime
     std::vector<RoomEvent> events_{};
 
     /** @brief Deterministic rejection code. */
-    std::optional<ErrorCode> errorCode_{};
+    std::optional<ErrorCode> errorCode_{ErrorCode::None};
 
     /** @brief Human-readable result explanation. */
     std::string message_{};

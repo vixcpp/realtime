@@ -26,7 +26,9 @@ namespace vix::realtime
       std::string message)
       : status_(status),
         events_(std::move(events)),
-        errorCode_(errorCode),
+        errorCode_(errorCode.has_value()
+                       ? errorCode
+                       : std::optional<ErrorCode>{ErrorCode::None}),
         message_(std::move(message)),
         metadata_()
   {
@@ -174,7 +176,8 @@ namespace vix::realtime
     switch (status_)
     {
     case CommandStatus::Accepted:
-      if (errorCode_.has_value())
+      if (errorCode_.has_value() &&
+          *errorCode_ != ErrorCode::None)
       {
         return false;
       }
@@ -196,7 +199,8 @@ namespace vix::realtime
 
     case CommandStatus::Ignored:
       return events_.empty() &&
-             !errorCode_.has_value();
+             (!errorCode_.has_value() ||
+              *errorCode_ == ErrorCode::None);
     }
 
     return false;
@@ -207,7 +211,8 @@ namespace vix::realtime
     switch (status_)
     {
     case CommandStatus::Accepted:
-      if (errorCode_.has_value())
+      if (errorCode_.has_value() &&
+          *errorCode_ != ErrorCode::None)
       {
         throw Error{
             ErrorCode::InternalError,
@@ -247,7 +252,8 @@ namespace vix::realtime
             "ignored command result cannot contain events"};
       }
 
-      if (errorCode_.has_value())
+      if (errorCode_.has_value() &&
+          *errorCode_ != ErrorCode::None)
       {
         throw Error{
             ErrorCode::InternalError,

@@ -20,6 +20,7 @@
 #include <memory>
 #include <mutex>
 #include <string_view>
+#include <utility>
 
 #include <vix/realtime/api.hpp>
 #include <vix/realtime/connection.hpp>
@@ -94,6 +95,11 @@ namespace vix::realtime
         RoomManagerPtr manager,
         std::shared_ptr<internal::TokenGenerator> tokenGenerator = nullptr);
 
+    SessionResume(
+        RoomManagerPtr manager,
+        std::chrono::milliseconds resumeWindow,
+        std::shared_ptr<internal::TokenGenerator> tokenGenerator = nullptr);
+
     /**
      * @brief Issue and store a new token for one logical session.
      *
@@ -108,6 +114,9 @@ namespace vix::realtime
     [[nodiscard]] ResumeToken issue(
         const SessionId &sessionId);
 
+    [[nodiscard]] ResumeToken issue(
+        Session &session);
+
     /**
      * @brief Rotate the current token of one logical session.
      *
@@ -118,6 +127,9 @@ namespace vix::realtime
      */
     [[nodiscard]] ResumeToken rotate(
         const SessionId &sessionId);
+
+    [[nodiscard]] ResumeToken rotate(
+        Session &session);
 
     /**
      * @brief Revoke the current token of one logical session.
@@ -133,6 +145,9 @@ namespace vix::realtime
     bool revoke(
         const SessionId &sessionId);
 
+    bool revoke(
+        Session &session);
+
     /**
      * @brief Return whether a supplied token matches the session token.
      *
@@ -145,6 +160,10 @@ namespace vix::realtime
      */
     [[nodiscard]] bool matches(
         const SessionId &sessionId,
+        std::string_view token) const noexcept;
+
+    [[nodiscard]] bool matches(
+        const Session &session,
         std::string_view token) const noexcept;
 
     /**
@@ -160,6 +179,11 @@ namespace vix::realtime
      */
     [[nodiscard]] bool can_resume(
         const SessionId &sessionId,
+        std::string_view token,
+        Timestamp now = SystemClock::now()) const noexcept;
+
+    [[nodiscard]] bool can_resume(
+        const Session &session,
         std::string_view token,
         Timestamp now = SystemClock::now()) const noexcept;
 
@@ -186,6 +210,20 @@ namespace vix::realtime
         const SessionId &sessionId,
         std::string_view token,
         ConnectionPtr connection,
+        Timestamp now = SystemClock::now(),
+        bool rotateToken = true);
+
+    [[nodiscard]] SessionResumeResult resume(
+        const SessionPtr &session,
+        ConnectionPtr connection,
+        std::string_view token,
+        Timestamp now = SystemClock::now(),
+        bool rotateToken = true);
+
+    [[nodiscard]] SessionResumeResult resume(
+        Session &session,
+        ConnectionPtr connection,
+        std::string_view token,
         Timestamp now = SystemClock::now(),
         bool rotateToken = true);
 
@@ -253,6 +291,12 @@ namespace vix::realtime
 
     /** @brief Opaque random resume token generator. */
     std::shared_ptr<internal::TokenGenerator> tokenGenerator_{};
+
+    /** @brief Whether a constructor supplied an explicit resume window. */
+    bool hasCustomResumeWindow_{false};
+
+    /** @brief Explicit resume window used by compatibility constructors. */
+    std::chrono::milliseconds customResumeWindow_{};
 
     /** @brief Serializes token validation, rotation, and attachment. */
     mutable std::mutex mutex_{};

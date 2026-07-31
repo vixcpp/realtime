@@ -67,7 +67,7 @@ namespace vix::realtime
       {
       }
 
-      [[nodiscard]] std::string_view
+      [[nodiscard]] const ConnectionId &
       id() const noexcept override
       {
         return identifier_;
@@ -96,8 +96,8 @@ namespace vix::realtime
         ++closeCount_;
       }
 
-      [[nodiscard]] const JsonObject &
-      metadata() const noexcept override
+      [[nodiscard]] JsonObject
+      metadata() const override
       {
         return metadata_;
       }
@@ -322,7 +322,7 @@ namespace vix::realtime
       }
     };
 
-    class CounterFactory
+    class CounterFactory final : public RoomFactory
     {
     public:
       CounterFactory(
@@ -355,6 +355,24 @@ namespace vix::realtime
         return create(
             roomId,
             config);
+      }
+
+      [[nodiscard]] std::string_view
+      room_type() const noexcept override
+      {
+        return "counter";
+      }
+
+      [[nodiscard]] RoomStatePtr create_state(
+          const RoomId &) const override
+      {
+        return std::make_unique<CounterState>();
+      }
+
+      [[nodiscard]] RoomHandlerPtr create_handler(
+          const RoomId &) const override
+      {
+        return std::make_unique<CounterHandler>();
       }
 
     private:
@@ -417,6 +435,18 @@ namespace vix::realtime
         const CounterFactory &factory)
     {
       if constexpr (
+          requires {
+            manager.register_factory(
+                std::make_shared<CounterFactory>(
+                    factory));
+          })
+      {
+        static_cast<void>(
+            manager.register_factory(
+                std::make_shared<CounterFactory>(
+                    factory)));
+      }
+      else if constexpr (
           requires {
             manager.register_factory(
                 std::string_view{
@@ -582,6 +612,26 @@ namespace vix::realtime
       {
         room.join_session(
             session);
+
+        return true;
+      }
+      else if constexpr (
+          requires {
+            {
+              room.join(session->id())
+            } -> std::convertible_to<bool>;
+          })
+      {
+        return room.join(
+            session->id());
+      }
+      else if constexpr (
+          requires {
+            room.join(session->id());
+          })
+      {
+        room.join(
+            session->id());
 
         return true;
       }

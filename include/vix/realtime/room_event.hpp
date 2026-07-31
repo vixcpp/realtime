@@ -195,7 +195,7 @@ namespace vix::realtime
      * @param value Delivery audience.
      * @return Current event.
      */
-    RoomEvent &set_audience(EventAudience value) noexcept;
+    RoomEvent &set_audience(EventAudience value);
 
     /**
      * @brief Set the explicitly targeted session.

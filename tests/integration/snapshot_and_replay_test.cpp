@@ -59,6 +59,16 @@ namespace vix::realtime
       if constexpr (
           requires {
             {
+              room.execute(command)
+            } -> std::same_as<CommandResult>;
+          })
+      {
+        return room.execute(
+            command);
+      }
+      else if constexpr (
+          requires {
+            {
               room.handle_command(command)
             } -> std::same_as<CommandResult>;
           })
@@ -105,29 +115,62 @@ namespace vix::realtime
     }
 
     template <typename RoomType>
+    void open_room(
+        RoomType &room)
+    {
+      if constexpr (
+          requires {
+            {
+              room.open()
+            } -> std::same_as<CommandResult>;
+          })
+      {
+        const CommandResult result =
+            room.open();
+
+        ASSERT_FALSE(
+            result.is_rejected());
+      }
+      else
+      {
+        static_assert(
+            dependentFalse<RoomType>,
+            "Unsupported Room open API");
+      }
+    }
+
+    template <typename RoomType>
     void close_room(
         RoomType &room)
     {
       if constexpr (
           requires {
-            room.close();
+            {
+              room.close()
+            } -> std::same_as<CommandResult>;
           })
       {
-        room.close();
+        const CommandResult result =
+            room.close();
+
+        ASSERT_FALSE(
+            result.is_rejected());
       }
       else if constexpr (
           requires {
             room.shutdown();
           })
       {
-        room.shutdown();
+        static_cast<void>(
+            room.shutdown());
       }
       else if constexpr (
           requires {
             room.stop();
           })
       {
-        room.stop();
+        static_cast<void>(
+            room.stop());
       }
       else
       {
@@ -440,7 +483,8 @@ namespace vix::realtime
               fixture,
               config);
 
-      first->open();
+      open_room(
+          *first);
 
       append_commands(
           *first,
@@ -478,7 +522,8 @@ namespace vix::realtime
               fixture,
               config);
 
-      restored->open();
+      open_room(
+          *restored);
 
       EXPECT_TRUE(
           restored->is_open());
@@ -534,7 +579,8 @@ namespace vix::realtime
               fixture,
               config);
 
-      first->open();
+      open_room(
+          *first);
 
       append_commands(
           *first,
@@ -554,7 +600,8 @@ namespace vix::realtime
               fixture,
               config);
 
-      restored->open();
+      open_room(
+          *restored);
 
       EXPECT_EQ(
           fixture.eventStore
@@ -591,7 +638,8 @@ namespace vix::realtime
               fixture,
               config);
 
-      first->open();
+      open_room(
+          *first);
 
       append_commands(
           *first,
@@ -605,7 +653,8 @@ namespace vix::realtime
               fixture,
               config);
 
-      restored->open();
+      open_room(
+          *restored);
 
       const CommandResult result =
           dispatch_command(
@@ -679,7 +728,8 @@ namespace vix::realtime
               fixture,
               config);
 
-      first->open();
+      open_room(
+          *first);
 
       append_commands(
           *first,
@@ -699,7 +749,8 @@ namespace vix::realtime
               fixture,
               config);
 
-      restored->open();
+      open_room(
+          *restored);
 
       EXPECT_EQ(
           counter_state(
@@ -762,7 +813,8 @@ namespace vix::realtime
               fixture,
               config);
 
-      first->open();
+      open_room(
+          *first);
 
       append_commands(
           *first,
@@ -809,7 +861,8 @@ namespace vix::realtime
               fixture,
               config);
 
-      restored->open();
+      open_room(
+          *restored);
 
       EXPECT_EQ(
           counter_state(
@@ -847,7 +900,8 @@ namespace vix::realtime
               fixture,
               config);
 
-      room->open();
+      open_room(
+          *room);
 
       append_commands(
           *room,
@@ -892,7 +946,8 @@ namespace vix::realtime
               fixture,
               config);
 
-      original->open();
+      open_room(
+          *original);
 
       append_commands(
           *original,
@@ -911,8 +966,11 @@ namespace vix::realtime
               fixture,
               config);
 
-      firstRestoration->open();
-      secondRestoration->open();
+      open_room(
+          *firstRestoration);
+
+      open_room(
+          *secondRestoration);
 
       EXPECT_EQ(
           counter_state(

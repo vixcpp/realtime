@@ -28,6 +28,7 @@ project(
 
 include(GNUInstallDirs)
 include(FetchContent)
+include(CMakePackageConfigHelpers)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -68,6 +69,22 @@ option(
   OFF
 )
 
+option(
+  VIX_REALTIME_ENABLE_INSTALL
+  "Generate install rules for the realtime standalone package"
+  OFF
+)
+
+option(
+  VIX_REALTIME_ENABLE_INSTALL
+  "Generate install rules for the realtime standalone package"
+  OFF
+)
+
+if(NOT VIX_REALTIME_ENABLE_INSTALL)
+  set(CMAKE_SKIP_INSTALL_RULES TRUE)
+endif()
+
 # --------------------------------------------------------------------
 # Dependency resolution
 # --------------------------------------------------------------------
@@ -75,25 +92,45 @@ option(
 function(vix_realtime_find_target output_variable)
   foreach(candidate IN LISTS ARGN)
     if(TARGET "${candidate}")
-      set("${output_variable}" "${candidate}" PARENT_SCOPE)
+      set(
+        "${output_variable}"
+        "${candidate}"
+        PARENT_SCOPE
+      )
+
       return()
     endif()
   endforeach()
 
-  set("${output_variable}" "" PARENT_SCOPE)
+  set(
+    "${output_variable}"
+    ""
+    PARENT_SCOPE
+  )
 endfunction()
 
 function(vix_realtime_resolve_dependency module output_variable)
   set(candidate_targets ${ARGN})
 
-  vix_realtime_find_target(resolved_target ${candidate_targets})
+  vix_realtime_find_target(
+    resolved_target
+    ${candidate_targets}
+  )
 
   if(resolved_target)
-    set("${output_variable}" "${resolved_target}" PARENT_SCOPE)
+    set(
+      "${output_variable}"
+      "${resolved_target}"
+      PARENT_SCOPE
+    )
+
     return()
   endif()
 
-  set(sibling_directory "${CMAKE_CURRENT_LIST_DIR}/../${module}")
+  set(
+    sibling_directory
+    "${CMAKE_CURRENT_LIST_DIR}/../${module}"
+  )
 
   if(EXISTS "${sibling_directory}/CMakeLists.txt")
     message(
@@ -124,7 +161,9 @@ function(vix_realtime_resolve_dependency module output_variable)
       GIT_SHALLOW TRUE
     )
 
-    FetchContent_MakeAvailable(${fetch_name})
+    FetchContent_MakeAvailable(
+      ${fetch_name}
+    )
   else()
     message(
       FATAL_ERROR
@@ -134,7 +173,10 @@ function(vix_realtime_resolve_dependency module output_variable)
     )
   endif()
 
-  vix_realtime_find_target(resolved_target ${candidate_targets})
+  vix_realtime_find_target(
+    resolved_target
+    ${candidate_targets}
+  )
 
   if(NOT resolved_target)
     message(
@@ -144,7 +186,11 @@ function(vix_realtime_resolve_dependency module output_variable)
     )
   endif()
 
-  set("${output_variable}" "${resolved_target}" PARENT_SCOPE)
+  set(
+    "${output_variable}"
+    "${resolved_target}"
+    PARENT_SCOPE
+  )
 endfunction()
 
 # JSON is resolved first because other Vix modules may require it
@@ -217,7 +263,10 @@ if(VIX_REALTIME_WITH_POSTGRES)
   )
 endif()
 
-find_package(Threads REQUIRED)
+find_package(
+  Threads
+  REQUIRED
+)
 
 # --------------------------------------------------------------------
 # Sources and headers
@@ -271,20 +320,33 @@ if(REALTIME_SOURCES)
     ${REALTIME_PUBLIC_HEADERS}
   )
 
-  set(VIX_REALTIME_LINK_SCOPE PUBLIC)
+  set(
+    VIX_REALTIME_LINK_SCOPE
+    PUBLIC
+  )
 else()
   message(
     STATUS
     "[realtime] Building INTERFACE library because src/ is empty"
   )
 
-  add_library(vix_realtime INTERFACE)
+  add_library(
+    vix_realtime
+    INTERFACE
+  )
 
-  set(VIX_REALTIME_LINK_SCOPE INTERFACE)
+  set(
+    VIX_REALTIME_LINK_SCOPE
+    INTERFACE
+  )
 endif()
 
 if(NOT TARGET vix::realtime)
-  add_library(vix::realtime ALIAS vix_realtime)
+  add_library(
+    vix::realtime
+    ALIAS
+    vix_realtime
+  )
 endif()
 
 target_compile_features(
@@ -371,39 +433,89 @@ if(REALTIME_SOURCES)
       -fsanitize=address,undefined
     )
   endif()
-
-  set_target_properties(
-    vix_realtime
-    PROPERTIES
-      OUTPUT_NAME vix_realtime
-      VERSION ${PROJECT_VERSION}
-      SOVERSION ${PROJECT_VERSION_MAJOR}
-      EXPORT_NAME realtime
-  )
 endif()
+
+set_target_properties(
+  vix_realtime
+  PROPERTIES
+    OUTPUT_NAME vix_realtime
+    VERSION ${PROJECT_VERSION}
+    SOVERSION ${PROJECT_VERSION_MAJOR}
+    EXPORT_NAME realtime
+)
 
 # --------------------------------------------------------------------
 # Installation
 # --------------------------------------------------------------------
 
-install(
-  TARGETS vix_realtime
-  EXPORT VixTargets
-  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-  INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
-)
-
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/include")
-  install(
-    DIRECTORY include/
-    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
-    FILES_MATCHING
-      PATTERN "*.hpp"
-      PATTERN "*.h"
-      PATTERN "*.inc"
+if(VIX_REALTIME_ENABLE_INSTALL)
+  set(
+    VIX_REALTIME_INSTALL_CMAKEDIR
+    "${CMAKE_INSTALL_LIBDIR}/cmake/vix_realtime"
   )
+
+  configure_package_config_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/vix_realtimeConfig.cmake.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/vix_realtimeConfig.cmake"
+    INSTALL_DESTINATION
+      "${VIX_REALTIME_INSTALL_CMAKEDIR}"
+    NO_SET_AND_CHECK_MACRO
+  )
+
+  write_basic_package_version_file(
+    "${CMAKE_CURRENT_BINARY_DIR}/vix_realtimeConfigVersion.cmake"
+    VERSION
+      ${PROJECT_VERSION}
+    COMPATIBILITY
+      SameMajorVersion
+  )
+
+  install(
+    TARGETS
+      vix_realtime
+    EXPORT
+      VixRealtimeTargets
+    ARCHIVE DESTINATION
+      ${CMAKE_INSTALL_LIBDIR}
+    LIBRARY DESTINATION
+      ${CMAKE_INSTALL_LIBDIR}
+    RUNTIME DESTINATION
+      ${CMAKE_INSTALL_BINDIR}
+    INCLUDES DESTINATION
+      ${CMAKE_INSTALL_INCLUDEDIR}
+  )
+
+  install(
+    EXPORT
+      VixRealtimeTargets
+    FILE
+      VixRealtimeTargets.cmake
+    NAMESPACE
+      vix::
+    DESTINATION
+      "${VIX_REALTIME_INSTALL_CMAKEDIR}"
+  )
+
+  install(
+    FILES
+      "${CMAKE_CURRENT_BINARY_DIR}/vix_realtimeConfig.cmake"
+      "${CMAKE_CURRENT_BINARY_DIR}/vix_realtimeConfigVersion.cmake"
+    DESTINATION
+      "${VIX_REALTIME_INSTALL_CMAKEDIR}"
+  )
+
+  if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/include")
+    install(
+      DIRECTORY
+        include/
+      DESTINATION
+        ${CMAKE_INSTALL_INCLUDEDIR}
+      FILES_MATCHING
+        PATTERN "*.hpp"
+        PATTERN "*.h"
+        PATTERN "*.inc"
+    )
+  endif()
 endif()
 
 # --------------------------------------------------------------------
@@ -412,8 +524,12 @@ endif()
 
 if(VIX_REALTIME_BUILD_TESTS)
   include(CTest)
+
   enable_testing()
-  add_subdirectory(tests)
+
+  add_subdirectory(
+    tests
+  )
 endif()
 
 # --------------------------------------------------------------------
@@ -424,27 +540,78 @@ if(
   VIX_REALTIME_BUILD_EXAMPLES
   AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/examples/CMakeLists.txt"
 )
-  add_subdirectory(examples)
+  add_subdirectory(
+    examples
+  )
 endif()
 
 # --------------------------------------------------------------------
 # Configuration summary
 # --------------------------------------------------------------------
 
-message(STATUS "------------------------------------------------------")
-message(STATUS "vix::realtime configured (${PROJECT_VERSION})")
+message(
+  STATUS
+  "------------------------------------------------------"
+)
+
+message(
+  STATUS
+  "vix::realtime configured (${PROJECT_VERSION})"
+)
 
 if(REALTIME_SOURCES)
-  message(STATUS "Mode:                  STATIC")
+  message(
+    STATUS
+    "Mode:                  STATIC"
+  )
 else()
-  message(STATUS "Mode:                  INTERFACE")
+  message(
+    STATUS
+    "Mode:                  INTERFACE"
+  )
 endif()
 
-message(STATUS "WebSocket adapter:     ${VIX_REALTIME_WITH_WEBSOCKET}")
-message(STATUS "PostgreSQL stores:     ${VIX_REALTIME_WITH_POSTGRES}")
-message(STATUS "Build tests:           ${VIX_REALTIME_BUILD_TESTS}")
-message(STATUS "Build examples:        ${VIX_REALTIME_BUILD_EXAMPLES}")
-message(STATUS "Fetch dependencies:    ${VIX_REALTIME_FETCH_DEPENDENCIES}")
-message(STATUS "Include directory:     ${CMAKE_CURRENT_SOURCE_DIR}/include")
-message(STATUS "Build type:            ${CMAKE_BUILD_TYPE}")
-message(STATUS "------------------------------------------------------")
+message(
+  STATUS
+  "WebSocket adapter:     ${VIX_REALTIME_WITH_WEBSOCKET}"
+)
+
+message(
+  STATUS
+  "PostgreSQL stores:     ${VIX_REALTIME_WITH_POSTGRES}"
+)
+
+message(
+  STATUS
+  "Build tests:           ${VIX_REALTIME_BUILD_TESTS}"
+)
+
+message(
+  STATUS
+  "Build examples:        ${VIX_REALTIME_BUILD_EXAMPLES}"
+)
+
+message(
+  STATUS
+  "Install package:       ${VIX_REALTIME_ENABLE_INSTALL}"
+)
+
+message(
+  STATUS
+  "Fetch dependencies:    ${VIX_REALTIME_FETCH_DEPENDENCIES}"
+)
+
+message(
+  STATUS
+  "Include directory:     ${CMAKE_CURRENT_SOURCE_DIR}/include"
+)
+
+message(
+  STATUS
+  "Build type:            ${CMAKE_BUILD_TYPE}"
+)
+
+message(
+  STATUS
+  "------------------------------------------------------"
+)

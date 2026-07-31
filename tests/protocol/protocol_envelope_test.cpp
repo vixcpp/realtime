@@ -380,7 +380,7 @@ namespace vix::realtime::protocol
       RoomSnapshot snapshot{
           make_room_id(),
           RoomVersion{
-              VersionValue{12}},
+              VersionValue{21}},
           EventId{
               EventIdValue{21}},
           std::move(state),
@@ -416,7 +416,7 @@ namespace vix::realtime::protocol
       EXPECT_EQ(
           envelope.room_version()
               ->value(),
-          VersionValue{12});
+          VersionValue{21});
 
       ASSERT_TRUE(
           envelope.event_id()

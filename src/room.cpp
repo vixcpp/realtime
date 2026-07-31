@@ -19,6 +19,8 @@
 #include <utility>
 
 #include <vix/realtime/errors.hpp>
+#include <vix/realtime/protocol.hpp>
+#include <vix/realtime/session.hpp>
 
 namespace vix::realtime
 {
@@ -116,6 +118,13 @@ namespace vix::realtime
           "room requires an event store"};
     }
 
+    if (!snapshotStore_)
+    {
+      throw Error{
+          ErrorCode::MissingDependency,
+          "room requires a snapshot store"};
+    }
+
     if (state_->schema_version() == 0)
     {
       throw Error{
@@ -144,6 +153,25 @@ namespace vix::realtime
           ErrorCode::InvalidConfiguration,
           "room owner node identifier cannot be empty"};
     }
+  }
+
+  Room::Room(
+      RoomId roomId,
+      RoomStatePtr state,
+      RoomHandlerPtr handler,
+      EventStorePtr eventStore,
+      SnapshotStorePtr snapshotStore,
+      Config config)
+      : Room(
+            std::move(roomId),
+            "default",
+            RoomComponents{
+                std::move(state),
+                std::move(handler)},
+            std::move(eventStore),
+            std::move(snapshotStore),
+            std::move(config))
+  {
   }
 
   Room::~Room()
@@ -302,7 +330,18 @@ namespace vix::realtime
                   true));
         }
 
+        for (const auto &[sessionId, session] : sessionRefs_)
+        {
+          static_cast<void>(sessionId);
+          if (session)
+          {
+            static_cast<void>(
+                session->leave_room(roomId_));
+          }
+        }
+
         sessions_.clear();
+        sessionRefs_.clear();
         status_ = RoomStatus::Closed;
         touch_locked(now);
         commandQueue_.close();
@@ -388,6 +427,36 @@ namespace vix::realtime
     std::shared_ptr<internal::EventDispatcher> dispatcher;
     CommandResult result;
 
+    if (command.room_id() != roomId_)
+    {
+      return CommandResult::rejected(
+          ErrorCode::InvalidCommand,
+          "command belongs to a different room");
+    }
+
+    const std::size_t previousInFlight =
+        directCommandsInFlight_.fetch_add(1);
+
+    if (previousInFlight >=
+        config_.maxPendingCommandsPerRoom)
+    {
+      directCommandsInFlight_.fetch_sub(1);
+
+      return CommandResult::rejected(
+          ErrorCode::CommandQueueFull,
+          "room command queue is full");
+    }
+
+    struct DirectCommandGuard
+    {
+      std::atomic<std::size_t> &count;
+
+      ~DirectCommandGuard()
+      {
+        count.fetch_sub(1);
+      }
+    } directCommandGuard{directCommandsInFlight_};
+
     {
       std::lock_guard<std::mutex> lock{mutex_};
 
@@ -404,21 +473,6 @@ namespace vix::realtime
         throw Error{
             ErrorCode::RoomNotReady,
             "room is not ready to process commands"};
-      }
-
-      if (command.room_id() != roomId_)
-      {
-        throw Error{
-            ErrorCode::InvalidCommand,
-            "command belongs to a different room"};
-      }
-
-      if (!sessions_.contains(
-              command.session_id()))
-      {
-        throw Error{
-            ErrorCode::MembershipNotFound,
-            "command session is not a member of the room"};
       }
 
       if (command.expected_version() &&
@@ -441,18 +495,27 @@ namespace vix::realtime
               now,
               metadata_);
 
-      result =
-          handler_->handle_command(
-              command,
-              *state_,
-              context);
+      try
+      {
+        result =
+            handler_->handle_command(
+                command,
+                *state_,
+                context);
 
-      result.validate();
+        result.validate();
 
-      committedEvents =
-          commit_result_locked(
-              result,
-              context);
+        committedEvents =
+            commit_result_locked(
+                result,
+                context);
+      }
+      catch (...)
+      {
+        status_ = RoomStatus::Failed;
+        commandQueue_.close();
+        throw;
+      }
 
       try_automatic_snapshot_locked();
       touch_locked(now);
@@ -498,9 +561,7 @@ namespace vix::realtime
 
       if (sessions_.contains(sessionId))
       {
-        throw Error{
-            ErrorCode::AlreadyJoined,
-            "session already belongs to the room"};
+        return CommandResult::ignored();
       }
 
       if (sessions_.size() >=
@@ -564,6 +625,33 @@ namespace vix::realtime
     return result;
   }
 
+  CommandResult Room::join(
+      const SessionPtr &session)
+  {
+    if (!session)
+    {
+      throw Error{
+          ErrorCode::SessionNotFound,
+          "room join requires a session"};
+    }
+
+    CommandResult result =
+        join(session->id());
+
+    if (!result.is_rejected())
+    {
+      static_cast<void>(
+          session->join_room(roomId_));
+    }
+
+    {
+      std::lock_guard<std::mutex> lock{mutex_};
+      sessionRefs_[session->id()] = session;
+    }
+
+    return result;
+  }
+
   CommandResult Room::leave(
       const SessionId &sessionId)
   {
@@ -593,9 +681,7 @@ namespace vix::realtime
 
       if (!sessions_.contains(sessionId))
       {
-        throw Error{
-            ErrorCode::MembershipNotFound,
-            "session does not belong to the room"};
+        return CommandResult::ignored();
       }
 
       const Timestamp now =
@@ -631,6 +717,20 @@ namespace vix::realtime
 
       sessions_.erase(sessionId);
 
+      const auto sessionIterator =
+          sessionRefs_.find(sessionId);
+
+      if (sessionIterator != sessionRefs_.end())
+      {
+        if (sessionIterator->second)
+        {
+          static_cast<void>(
+              sessionIterator->second->leave_room(roomId_));
+        }
+
+        sessionRefs_.erase(sessionIterator);
+      }
+
       try_automatic_snapshot_locked();
       touch_locked(now);
     }
@@ -641,6 +741,72 @@ namespace vix::realtime
         dispatcher);
 
     return result;
+  }
+
+  void Room::broadcast(
+      const RoomEvent &event) const
+  {
+    std::vector<SessionId> recipients;
+    std::shared_ptr<internal::EventDispatcher> dispatcher;
+    std::vector<SessionPtr> directSessions;
+
+    {
+      std::lock_guard<std::mutex> lock{mutex_};
+      recipients = sessions_locked();
+      dispatcher = eventDispatcher_;
+
+      if (!dispatcher)
+      {
+        const std::vector<SessionId> selected =
+            internal::EventDispatcher::select_recipients(
+                event,
+                recipients);
+
+        directSessions.reserve(
+            selected.size());
+
+        for (const SessionId &sessionId : selected)
+        {
+          const auto iterator =
+              sessionRefs_.find(sessionId);
+
+          if (iterator != sessionRefs_.end())
+          {
+            directSessions.push_back(
+                iterator->second);
+          }
+        }
+      }
+    }
+
+    if (dispatcher)
+    {
+      dispatch_events(
+          std::vector<RoomEvent>{event},
+          recipients,
+          dispatcher);
+      return;
+    }
+
+    const protocol::Envelope envelope =
+        protocol::from_event(event);
+
+    for (const SessionPtr &session : directSessions)
+    {
+      if (!session)
+      {
+        continue;
+      }
+
+      ConnectionPtr connection =
+          session->connection();
+
+      if (connection &&
+          connection->is_open())
+      {
+        connection->send(envelope);
+      }
+    }
   }
 
   std::optional<RoomSnapshot>
@@ -685,6 +851,13 @@ namespace vix::realtime
     return status_ == RoomStatus::Open;
   }
 
+  bool Room::is_closed() const
+  {
+    std::lock_guard<std::mutex> lock{mutex_};
+
+    return status_ == RoomStatus::Closed;
+  }
+
   bool Room::failed() const
   {
     std::lock_guard<std::mutex> lock{mutex_};
@@ -713,6 +886,20 @@ namespace vix::realtime
     return state_->serialize();
   }
 
+  const RoomState &Room::state() const
+  {
+    std::lock_guard<std::mutex> lock{mutex_};
+
+    return *state_;
+  }
+
+  Config Room::config() const
+  {
+    std::lock_guard<std::mutex> lock{mutex_};
+
+    return config_;
+  }
+
   bool Room::has_session(
       const SessionId &sessionId) const
   {
@@ -738,6 +925,16 @@ namespace vix::realtime
     std::lock_guard<std::mutex> lock{mutex_};
 
     return sessions_.size();
+  }
+
+  std::size_t Room::member_count() const
+  {
+    return session_count();
+  }
+
+  bool Room::empty() const
+  {
+    return session_count() == 0;
   }
 
   std::size_t Room::pending_command_count() const
@@ -903,6 +1100,13 @@ namespace vix::realtime
           "event store returned an incomplete persisted batch"};
     }
 
+    std::unique_ptr<RoomState> rollbackState =
+        state_->clone();
+    const RoomVersion rollbackVersion =
+        roomVersion_;
+    const EventId rollbackEventId =
+        lastEventId_;
+
     try
     {
       for (const auto &event : persisted)
@@ -914,6 +1118,13 @@ namespace vix::realtime
     }
     catch (const Error &error)
     {
+      if (rollbackState)
+      {
+        state_ = std::move(rollbackState);
+        roomVersion_ = rollbackVersion;
+        lastEventId_ = rollbackEventId;
+      }
+
       status_ = RoomStatus::Failed;
 
       throw Error{
@@ -924,6 +1135,13 @@ namespace vix::realtime
     }
     catch (const std::exception &error)
     {
+      if (rollbackState)
+      {
+        state_ = std::move(rollbackState);
+        roomVersion_ = rollbackVersion;
+        lastEventId_ = rollbackEventId;
+      }
+
       status_ = RoomStatus::Failed;
 
       throw Error{
@@ -934,6 +1152,13 @@ namespace vix::realtime
     }
     catch (...)
     {
+      if (rollbackState)
+      {
+        state_ = std::move(rollbackState);
+        roomVersion_ = rollbackVersion;
+        lastEventId_ = rollbackEventId;
+      }
+
       status_ = RoomStatus::Failed;
 
       throw Error{
@@ -952,13 +1177,6 @@ namespace vix::realtime
 
     if (!config_.restoreRoomsOnOpen)
     {
-      if (!eventStore_->latest_event_id(roomId_).empty())
-      {
-        throw Error{
-            ErrorCode::ReplayUnavailable,
-            "room restoration is disabled but persisted events exist"};
-      }
-
       return;
     }
 

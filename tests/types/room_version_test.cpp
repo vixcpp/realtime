@@ -201,11 +201,11 @@ namespace vix::realtime
           VersionValue{42}};
 
       EXPECT_EQ(
-          initial.value(),
+          to_string(initial),
           "0");
 
       EXPECT_EQ(
-          version.value(),
+          to_string(version),
           "42");
     }
 

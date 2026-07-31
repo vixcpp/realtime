@@ -145,6 +145,16 @@ namespace vix::realtime
     ConnectionPtr previous =
         std::move(connection_);
 
+    if (!previous)
+    {
+      previous =
+          std::move(detachedConnection_);
+    }
+    else
+    {
+      detachedConnection_.reset();
+    }
+
     connection_ = std::move(connection);
     detachedAt_.reset();
     lastSeenAt_ = now;
@@ -175,6 +185,7 @@ namespace vix::realtime
         std::move(connection_);
 
     connection_.reset();
+    detachedConnection_ = detached;
     detachedAt_ = now;
     lastSeenAt_ = now;
 
@@ -187,6 +198,12 @@ namespace vix::realtime
 
     if (!connection_)
     {
+      if (!closedAt_)
+      {
+        detachedAt_ = now;
+        lastSeenAt_ = now;
+      }
+
       return {};
     }
 
@@ -194,6 +211,7 @@ namespace vix::realtime
         std::move(connection_);
 
     connection_.reset();
+    detachedConnection_ = detached;
     detachedAt_ = now;
     lastSeenAt_ = now;
 
@@ -213,10 +231,26 @@ namespace vix::realtime
         std::move(connection_);
 
     connection_.reset();
+    detachedConnection_.reset();
     detachedAt_ = now;
     closedAt_ = now;
     lastSeenAt_ = now;
     resumeToken_.clear();
+    rooms_.clear();
+    roomCursors_.clear();
+
+    if (previous)
+    {
+      try
+      {
+        previous->close(
+            ErrorCode::Cancelled,
+            "session closed");
+      }
+      catch (...)
+      {
+      }
+    }
 
     return previous;
   }
@@ -401,13 +435,48 @@ namespace vix::realtime
     return rooms_.contains(roomId);
   }
 
-  std::vector<RoomId> Session::rooms() const
+  std::set<RoomId> Session::rooms() const
   {
     std::lock_guard<std::mutex> lock{mutex_};
 
-    return {
-        rooms_.begin(),
-        rooms_.end()};
+    return rooms_;
+  }
+
+  void Session::acknowledge(
+      const RoomId &roomId,
+      EventId eventId)
+  {
+    if (roomId.empty())
+    {
+      throw Error{
+          ErrorCode::MembershipNotFound,
+          "session cannot acknowledge an empty room identifier"};
+    }
+
+    std::lock_guard<std::mutex> lock{mutex_};
+
+    roomCursors_[roomId] = eventId;
+  }
+
+  EventId Session::last_event_id(
+      const RoomId &roomId) const
+  {
+    if (roomId.empty())
+    {
+      return {};
+    }
+
+    std::lock_guard<std::mutex> lock{mutex_};
+
+    const auto iterator =
+        roomCursors_.find(roomId);
+
+    if (iterator == roomCursors_.end())
+    {
+      return {};
+    }
+
+    return iterator->second;
   }
 
   std::size_t Session::room_count() const

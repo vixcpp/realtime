@@ -42,6 +42,106 @@ namespace vix::realtime
     validate();
   }
 
+  RoomOwner::RoomOwner(NodeId nodeId)
+      : nodeId_(std::move(nodeId))
+  {
+    if (nodeId_.empty())
+    {
+      throw Error{
+          ErrorCode::InvalidConfiguration,
+          "room owner requires a node identifier"};
+    }
+  }
+
+  void RoomOwner::set_node_id(NodeId nodeId)
+  {
+    if (nodeId.empty())
+    {
+      throw Error{
+          ErrorCode::InvalidConfiguration,
+          "room owner requires a node identifier"};
+    }
+
+    nodeId_ = std::move(nodeId);
+  }
+
+  bool RoomOwner::acquire(
+      const RoomId &roomId)
+  {
+    if (roomId.empty())
+    {
+      throw Error{
+          ErrorCode::InvalidConfiguration,
+          "room owner cannot acquire an empty room identifier"};
+    }
+
+    return ownedRooms_.insert(roomId).second;
+  }
+
+  bool RoomOwner::claim(
+      const RoomId &roomId)
+  {
+    return acquire(roomId);
+  }
+
+  bool RoomOwner::release(
+      const RoomId &roomId)
+  {
+    if (roomId.empty())
+    {
+      return false;
+    }
+
+    return ownedRooms_.erase(roomId) != 0;
+  }
+
+  bool RoomOwner::owns(
+      const RoomId &roomId) const
+  {
+    return !roomId.empty() &&
+           ownedRooms_.contains(roomId);
+  }
+
+  bool RoomOwner::owns_room(
+      const RoomId &roomId) const
+  {
+    return owns(roomId);
+  }
+
+  bool RoomOwner::contains(
+      const RoomId &roomId) const
+  {
+    return owns(roomId);
+  }
+
+  bool RoomOwner::has_room(
+      const RoomId &roomId) const
+  {
+    return owns(roomId);
+  }
+
+  std::size_t RoomOwner::room_count() const
+  {
+    return ownedRooms_.size();
+  }
+
+  bool RoomOwner::empty() const
+  {
+    return ownedRooms_.empty();
+  }
+
+  std::vector<RoomId> RoomOwner::rooms() const
+  {
+    return {
+        ownedRooms_.begin(),
+        ownedRooms_.end()};
+  }
+
+  void RoomOwner::clear()
+  {
+    ownedRooms_.clear();
+  }
+
   RoomOwner RoomOwner::leased(
       RoomId roomId,
       NodeId nodeId,

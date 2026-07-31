@@ -200,6 +200,14 @@ namespace vix::realtime
           "versioned room snapshot requires a last event identifier"};
     }
 
+    if (roomVersion_.value() <
+        lastEventId_.value())
+    {
+      throw Error{
+          ErrorCode::CorruptedState,
+          "room snapshot version cannot be behind the event position"};
+    }
+
     if (checksum_.has_value() && checksum_->empty())
     {
       throw Error{

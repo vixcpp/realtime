@@ -92,6 +92,9 @@ namespace vix::realtime::protocol
     /** @brief Client request submitted to the server. */
     Request = 0,
 
+    /** @brief Compatibility alias for client room commands. */
+    Command = Request,
+
     /** @brief Server response associated with a request. */
     Response,
 

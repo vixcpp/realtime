@@ -70,7 +70,7 @@ namespace vix::realtime
      *
      * A zero duration disables automatic idle room closure.
      */
-    std::chrono::seconds roomIdleTimeout{300};
+    std::chrono::milliseconds roomIdleTimeout{300000};
 
     /**
      * @brief Maximum duration allowed for one command handler.

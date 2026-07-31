@@ -1,0 +1,110 @@
+# ====================================================================
+#
+#  Vix.cpp — Realtime package configuration
+#
+# ====================================================================
+
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+# --------------------------------------------------------------------
+# Required dependencies
+# --------------------------------------------------------------------
+
+find_dependency(Threads REQUIRED)
+
+find_dependency(vix_core CONFIG REQUIRED)
+find_dependency(vix_error CONFIG REQUIRED)
+find_dependency(vix_json CONFIG REQUIRED)
+find_dependency(vix_async CONFIG REQUIRED)
+find_dependency(vix_sync CONFIG REQUIRED)
+find_dependency(vix_time CONFIG REQUIRED)
+find_dependency(vix_utils CONFIG REQUIRED)
+
+# --------------------------------------------------------------------
+# Optional features
+# --------------------------------------------------------------------
+
+set(
+  VIX_REALTIME_WITH_WEBSOCKET
+  "@VIX_REALTIME_WITH_WEBSOCKET@"
+)
+
+set(
+  VIX_REALTIME_WITH_POSTGRES
+  "@VIX_REALTIME_WITH_POSTGRES@"
+)
+
+if(VIX_REALTIME_WITH_WEBSOCKET)
+  find_dependency(
+    vix_websocket
+    CONFIG
+    REQUIRED
+  )
+endif()
+
+if(VIX_REALTIME_WITH_POSTGRES)
+  find_dependency(
+    vix_db
+    CONFIG
+    REQUIRED
+  )
+endif()
+
+# --------------------------------------------------------------------
+# Exported targets
+# --------------------------------------------------------------------
+
+if(NOT TARGET vix::realtime)
+  include(
+    "${CMAKE_CURRENT_LIST_DIR}/VixRealtimeTargets.cmake"
+  )
+endif()
+
+# --------------------------------------------------------------------
+# Package validation
+# --------------------------------------------------------------------
+
+if(NOT TARGET vix::realtime)
+  set(
+    vix_realtime_FOUND
+    FALSE
+  )
+
+  set(
+    vix_realtime_NOT_FOUND_MESSAGE
+    "The vix::realtime target was not created by the package configuration."
+  )
+
+  return()
+endif()
+
+set(
+  vix_realtime_VERSION
+  "@PROJECT_VERSION@"
+)
+
+set(
+  vix_realtime_VERSION_MAJOR
+  "@PROJECT_VERSION_MAJOR@"
+)
+
+set(
+  vix_realtime_VERSION_MINOR
+  "@PROJECT_VERSION_MINOR@"
+)
+
+set(
+  vix_realtime_VERSION_PATCH
+  "@PROJECT_VERSION_PATCH@"
+)
+
+set(
+  vix_realtime_FOUND
+  TRUE
+)
+
+check_required_components(
+  vix_realtime
+)

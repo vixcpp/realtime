@@ -17,11 +17,13 @@
 #define VIX_REALTIME_ROOM_MANAGER_HPP
 
 #include <cstddef>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <unordered_map>
 #include <vector>
 
@@ -32,6 +34,7 @@
 #include <vix/realtime/event_store.hpp>
 #include <vix/realtime/internal/command_queue.hpp>
 #include <vix/realtime/internal/event_dispatcher.hpp>
+#include <vix/realtime/local_presence_store.hpp>
 #include <vix/realtime/node_id.hpp>
 #include <vix/realtime/presence.hpp>
 #include <vix/realtime/presence_store.hpp>
@@ -107,6 +110,51 @@ namespace vix::realtime
         PresenceStorePtr presenceStore,
         std::shared_ptr<RoomDirectory> roomDirectory);
 
+    template <typename Factory>
+    RoomManager(
+        Config config,
+        NodeId nodeId,
+        EventStorePtr eventStore,
+        SnapshotStorePtr snapshotStore,
+        Factory factory)
+        : RoomManager(
+              std::move(nodeId),
+              config,
+              std::move(eventStore),
+              std::move(snapshotStore),
+              config.enablePresence
+                  ? std::make_shared<LocalPresenceStore>()
+                  : nullptr,
+              std::make_shared<RoomDirectory>())
+    {
+      static_cast<void>(
+          register_factory(
+              "default",
+              factory,
+              true));
+      static_cast<void>(
+          register_factory(
+              "counter",
+              std::move(factory),
+              true));
+    }
+
+    template <typename Factory>
+    RoomManager(
+        Config config,
+        NodeId nodeId,
+        Factory factory,
+        EventStorePtr eventStore,
+        SnapshotStorePtr snapshotStore)
+        : RoomManager(
+              std::move(config),
+              std::move(nodeId),
+              std::move(eventStore),
+              std::move(snapshotStore),
+              std::move(factory))
+    {
+    }
+
     /**
      * @brief Destroy the room manager and close local runtime objects.
      */
@@ -131,6 +179,89 @@ namespace vix::realtime
     bool register_factory(
         RoomFactoryPtr factory,
         bool replace = false);
+
+    template <typename Factory>
+    bool register_factory(
+        std::string_view roomType,
+        Factory factory,
+        bool replace = false)
+    {
+      if (!RoomFactory::is_valid_type(roomType))
+      {
+        throw Error{
+            ErrorCode::InvalidConfiguration,
+            "room factory type is invalid"};
+      }
+
+      std::function<RoomPtr(const RoomId &, const Config &)> adapter =
+          [factory = std::move(factory)](
+              const RoomId &roomId,
+              const Config &config) mutable -> RoomPtr
+      {
+        if constexpr (
+            requires {
+              {
+                factory(roomId, config)
+              } -> std::same_as<RoomPtr>;
+            })
+        {
+          return factory(roomId, config);
+        }
+        else if constexpr (
+            requires {
+              {
+                factory(roomId, config)
+              } -> std::same_as<std::unique_ptr<Room>>;
+            })
+        {
+          return RoomPtr{
+              factory(roomId, config).release()};
+        }
+        else if constexpr (
+            requires {
+              {
+                factory(roomId)
+              } -> std::same_as<RoomPtr>;
+            })
+        {
+          return factory(roomId);
+        }
+        else if constexpr (
+            requires {
+              {
+                factory(roomId)
+              } -> std::same_as<std::unique_ptr<Room>>;
+            })
+        {
+          return RoomPtr{
+              factory(roomId).release()};
+        }
+        else
+        {
+          static_assert(
+              sizeof(Factory) == 0,
+              "Unsupported RoomManager direct factory");
+        }
+      };
+
+      std::lock_guard<std::mutex> lock{mutex_};
+
+      std::string key{roomType};
+
+      if (!replace &&
+          (factories_.contains(key) ||
+           directFactories_.contains(key)))
+      {
+        return false;
+      }
+
+      factories_.erase(key);
+      directFactories_.insert_or_assign(
+          std::move(key),
+          std::move(adapter));
+
+      return true;
+    }
 
     /**
      * @brief Remove one room factory from the registry.
@@ -194,6 +325,28 @@ namespace vix::realtime
         RoomId roomId,
         std::string_view roomType,
         JsonObject metadata = {});
+
+    [[nodiscard]] RoomPtr open_room(
+        RoomId roomId)
+    {
+      return open_room(
+          std::move(roomId),
+          "default");
+    }
+
+    [[nodiscard]] RoomPtr open(
+        RoomId roomId)
+    {
+      return open_room(
+          std::move(roomId));
+    }
+
+    [[nodiscard]] RoomPtr get_or_open_room(
+        RoomId roomId)
+    {
+      return open_room(
+          std::move(roomId));
+    }
 
     /**
      * @brief Close one local room.
@@ -471,6 +624,14 @@ namespace vix::realtime
         const RoomId &roomId,
         const SessionId &sessionId) const;
 
+    [[nodiscard]] std::size_t cleanup(
+        Timestamp now = SystemClock::now());
+
+    [[nodiscard]] std::size_t cleanup_inactive(
+        Timestamp now = SystemClock::now());
+
+    void shutdown();
+
     /**
      * @brief List stored presence records for one room.
      *
@@ -604,6 +765,12 @@ namespace vix::realtime
 
     /** @brief Registered room factories indexed by room type. */
     std::unordered_map<std::string, RoomFactoryPtr> factories_{};
+
+    /** @brief Direct room factories indexed by room type. */
+    std::unordered_map<
+        std::string,
+        std::function<RoomPtr(const RoomId &, const Config &)>>
+        directFactories_{};
 
     /** @brief Process-local rooms indexed by room identifier. */
     std::unordered_map<RoomId, RoomPtr> rooms_{};

@@ -20,6 +20,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <string_view>
 
 #include <vix/realtime/api.hpp>
 #include <vix/realtime/connection.hpp>
@@ -58,7 +59,7 @@ namespace vix::realtime
       std::function<void(
           ConnectionPtr,
           ErrorCode,
-          const std::string &)>;
+          std::string_view)>;
 
   /**
    * @brief Collection of callbacks installed on a transport adapter.

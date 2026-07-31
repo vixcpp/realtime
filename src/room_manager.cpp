@@ -198,6 +198,7 @@ namespace vix::realtime
       rooms_.clear();
       sessions_.clear();
       factories_.clear();
+      directFactories_.clear();
     }
 
     for (const auto &room : rooms)
@@ -313,15 +314,21 @@ namespace vix::realtime
     const auto iterator =
         factories_.find(roomType);
 
-    if (iterator != factories_.end())
+    const auto directIterator =
+        directFactories_.find(roomType);
+
+    if (iterator != factories_.end() ||
+        directIterator != directFactories_.end())
     {
       if (!replace)
       {
         return false;
       }
 
-      iterator->second =
-          std::move(factory);
+      directFactories_.erase(roomType);
+      factories_.insert_or_assign(
+          roomType,
+          std::move(factory));
 
       return true;
     }
@@ -343,8 +350,15 @@ namespace vix::realtime
 
     std::lock_guard<std::mutex> lock{mutex_};
 
-    return factories_.erase(
-               std::string{roomType}) != 0;
+    const std::string key{roomType};
+
+    const bool removedFactory =
+        factories_.erase(key) != 0;
+
+    const bool removedDirect =
+        directFactories_.erase(key) != 0;
+
+    return removedFactory || removedDirect;
   }
 
   RoomFactoryPtr RoomManager::find_factory(
@@ -372,7 +386,17 @@ namespace vix::realtime
   bool RoomManager::has_factory(
       std::string_view roomType) const
   {
-    return find_factory(roomType) != nullptr;
+    if (!RoomFactory::is_valid_type(roomType))
+    {
+      return false;
+    }
+
+    std::lock_guard<std::mutex> lock{mutex_};
+
+    const std::string key{roomType};
+
+    return factories_.contains(key) ||
+           directFactories_.contains(key);
   }
 
   std::vector<std::string>
@@ -381,9 +405,17 @@ namespace vix::realtime
     std::lock_guard<std::mutex> lock{mutex_};
 
     std::vector<std::string> result;
-    result.reserve(factories_.size());
+    result.reserve(
+        factories_.size() +
+        directFactories_.size());
 
     for (const auto &[roomType, factory] : factories_)
+    {
+      static_cast<void>(factory);
+      result.push_back(roomType);
+    }
+
+    for (const auto &[roomType, factory] : directFactories_)
     {
       static_cast<void>(factory);
       result.push_back(roomType);
@@ -416,6 +448,7 @@ namespace vix::realtime
     }
 
     RoomFactoryPtr factory;
+    std::function<RoomPtr(const RoomId &, const Config &)> directFactory;
 
     {
       std::lock_guard<std::mutex> lock{mutex_};
@@ -428,7 +461,8 @@ namespace vix::realtime
         const RoomPtr &existing =
             roomIterator->second;
 
-        if (existing->type() != roomType)
+        if (existing->type() != roomType &&
+            existing->type() != "default")
         {
           throw Error{
               ErrorCode::RoomAlreadyExists,
@@ -457,15 +491,28 @@ namespace vix::realtime
           factories_.find(
               std::string{roomType});
 
+      const auto directFactoryIterator =
+          directFactories_.find(
+              std::string{roomType});
+
       if (factoryIterator ==
-          factories_.end())
+              factories_.end() &&
+          directFactoryIterator ==
+              directFactories_.end())
       {
         throw Error{
             ErrorCode::MissingDependency,
             "no factory is registered for the requested room type"};
       }
 
-      factory = factoryIterator->second;
+      if (factoryIterator != factories_.end())
+      {
+        factory = factoryIterator->second;
+      }
+      else
+      {
+        directFactory = directFactoryIterator->second;
+      }
     }
 
     RoomOwner owner =
@@ -480,19 +527,29 @@ namespace vix::realtime
 
     try
     {
-      RoomComponents components =
-          factory->create(roomId);
+      if (factory)
+      {
+        RoomComponents components =
+            factory->create(roomId);
 
-      room = std::make_shared<Room>(
-          roomId,
-          std::string{roomType},
-          std::move(components),
-          eventStore_,
-          snapshotStore_,
-          config_,
-          eventDispatcher_,
-          nodeId_,
-          std::move(metadata));
+        room = std::make_shared<Room>(
+            roomId,
+            std::string{roomType},
+            std::move(components),
+            eventStore_,
+            snapshotStore_,
+            config_,
+            eventDispatcher_,
+            nodeId_,
+            std::move(metadata));
+      }
+      else
+      {
+        room =
+            directFactory(
+                roomId,
+                config_);
+      }
 
       {
         std::lock_guard<std::mutex> lock{mutex_};
@@ -854,7 +911,7 @@ namespace vix::realtime
       return false;
     }
 
-    const std::vector<RoomId> joinedRooms =
+    const auto joinedRooms =
         session->rooms();
 
     for (const auto &roomId : joinedRooms)
@@ -1093,27 +1150,31 @@ namespace vix::realtime
   {
     command.validate();
 
-    SessionPtr session =
-        require_session(
-            command.session_id());
-
     RoomPtr room =
         require_room(
             command.room_id());
 
-    if (!session->has_room(
-            command.room_id()) ||
-        !room->has_session(
-            command.session_id()))
+    SessionPtr session =
+        find_session(
+            command.session_id());
+
+    if (session &&
+        (!session->has_room(
+             command.room_id()) ||
+         !room->has_session(
+             command.session_id())))
     {
       throw Error{
           ErrorCode::MembershipNotFound,
           "command session does not belong to the room"};
     }
 
-    touch_presence(
-        command.room_id(),
-        command.session_id());
+    if (session)
+    {
+      touch_presence(
+          command.room_id(),
+          command.session_id());
+    }
 
     return room->execute(command);
   }
@@ -1123,27 +1184,31 @@ namespace vix::realtime
   {
     command.validate();
 
-    SessionPtr session =
-        require_session(
-            command.session_id());
-
     RoomPtr room =
         require_room(
             command.room_id());
 
-    if (!session->has_room(
-            command.room_id()) ||
-        !room->has_session(
-            command.session_id()))
+    SessionPtr session =
+        find_session(
+            command.session_id());
+
+    if (session &&
+        (!session->has_room(
+             command.room_id()) ||
+         !room->has_session(
+             command.session_id())))
     {
       throw Error{
           ErrorCode::MembershipNotFound,
           "command session does not belong to the room"};
     }
 
-    touch_presence(
-        command.room_id(),
-        command.session_id());
+    if (session)
+    {
+      touch_presence(
+          command.room_id(),
+          command.session_id());
+    }
 
     return room->enqueue(
         std::move(command));
@@ -1183,6 +1248,86 @@ namespace vix::realtime
 
     return presenceStore_->list_room(
         roomId);
+  }
+
+  std::size_t RoomManager::cleanup(
+      Timestamp now)
+  {
+    if (config_.roomIdleTimeout.count() == 0)
+    {
+      return 0;
+    }
+
+    std::vector<RoomId> expired;
+
+    {
+      std::lock_guard<std::mutex> lock{mutex_};
+
+      for (const auto &[roomId, room] : rooms_)
+      {
+        if (!room ||
+            !room->is_open() ||
+            !room->empty())
+        {
+          continue;
+        }
+
+        const auto idleFor =
+            now - room->last_activity_at();
+
+        if (idleFor >= config_.roomIdleTimeout)
+        {
+          expired.push_back(roomId);
+        }
+      }
+    }
+
+    std::size_t removed = 0;
+
+    for (const RoomId &roomId : expired)
+    {
+      CommandResult result =
+          close_room(roomId, true);
+
+      if (!result.is_rejected())
+      {
+        ++removed;
+      }
+    }
+
+    return removed;
+  }
+
+  std::size_t RoomManager::cleanup_inactive(
+      Timestamp now)
+  {
+    return cleanup(now);
+  }
+
+  void RoomManager::shutdown()
+  {
+    const std::vector<SessionId> sessions =
+        session_ids();
+
+    for (const SessionId &sessionId : sessions)
+    {
+      static_cast<void>(
+          close_session(
+              sessionId,
+              ErrorCode::Cancelled,
+              "room manager shutdown"));
+    }
+
+    const std::vector<RoomId> rooms =
+        room_ids();
+
+    for (const RoomId &roomId : rooms)
+    {
+      static_cast<void>(
+          close_room(
+              roomId,
+              true));
+    }
   }
 
   const NodeId &

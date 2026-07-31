@@ -23,6 +23,7 @@ if(NOT TARGET vix::realtime)
 endif()
 
 find_package(Threads REQUIRED)
+find_package(GTest REQUIRED)
 
 set(
   VIX_REALTIME_TEST_TIMEOUT
@@ -134,6 +135,7 @@ function(vix_realtime_add_test test_source)
     ${test_target}
     PRIVATE
     vix::realtime
+    GTest::gtest_main
     Threads::Threads
   )
 

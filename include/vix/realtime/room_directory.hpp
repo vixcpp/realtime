@@ -18,6 +18,7 @@
 
 #include <chrono>
 #include <cstddef>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <unordered_map>
@@ -31,6 +32,9 @@
 
 namespace vix::realtime
 {
+  class Room;
+  using RoomPtr = std::shared_ptr<Room>;
+
   /**
    * @brief Thread-safe directory mapping logical rooms to owner nodes.
    *
@@ -314,6 +318,33 @@ namespace vix::realtime
     [[nodiscard]] RoomOwnerGeneration latest_generation(
         const RoomId &roomId) const;
 
+    bool register_room(
+        const RoomPtr &room);
+
+    bool register_room(
+        const RoomId &roomId,
+        const RoomPtr &room);
+
+    [[nodiscard]] RoomPtr find(
+        const RoomId &roomId) const;
+
+    [[nodiscard]] RoomPtr find_room(
+        const RoomId &roomId) const;
+
+    bool remove(
+        const RoomId &roomId);
+
+    bool unregister_room(
+        const RoomId &roomId);
+
+    [[nodiscard]] bool contains(
+        const RoomId &roomId) const;
+
+    [[nodiscard]] bool contains_room(
+        const RoomId &roomId) const;
+
+    [[nodiscard]] std::size_t room_count() const;
+
     /**
      * @brief Return the number of currently stored ownership claims.
      *
@@ -402,6 +433,9 @@ namespace vix::realtime
 
     /** @brief Latest observed generation for every known room. */
     std::unordered_map<RoomId, RoomOwnerGeneration> generations_{};
+
+    /** @brief Process-local room registry used by standalone managers/tests. */
+    std::unordered_map<RoomId, RoomPtr> rooms_{};
   };
 
 } // namespace vix::realtime

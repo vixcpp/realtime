@@ -24,6 +24,7 @@
 #include <optional>
 #include <set>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 #include <vix/realtime/api.hpp>
@@ -49,6 +50,8 @@ namespace vix::realtime
     /** @brief The session was permanently closed. */
     Closed
   };
+
+  using SessionState = SessionStatus;
 
   /**
    * @brief Return the stable textual representation of a session status.
@@ -147,12 +150,22 @@ namespace vix::realtime
      */
     [[nodiscard]] SessionStatus status() const;
 
+    [[nodiscard]] SessionStatus state() const
+    {
+      return status();
+    }
+
     /**
      * @brief Return whether the session has an open active connection.
      *
      * @return True when an open connection is attached.
      */
     [[nodiscard]] bool connected() const;
+
+    [[nodiscard]] bool detached() const
+    {
+      return status() == SessionStatus::Detached;
+    }
 
     /**
      * @brief Return whether the session is permanently closed.
@@ -353,7 +366,42 @@ namespace vix::realtime
      *
      * @return Joined room identifiers.
      */
-    [[nodiscard]] std::vector<RoomId> rooms() const;
+    [[nodiscard]] std::set<RoomId> rooms() const;
+
+    void acknowledge(
+        const RoomId &roomId,
+        EventId eventId);
+
+    void ack(
+        const RoomId &roomId,
+        EventId eventId)
+    {
+      acknowledge(roomId, eventId);
+    }
+
+    void set_room_cursor(
+        const RoomId &roomId,
+        EventId eventId)
+    {
+      acknowledge(roomId, eventId);
+    }
+
+    void update_room_cursor(
+        const RoomId &roomId,
+        EventId eventId)
+    {
+      acknowledge(roomId, eventId);
+    }
+
+    void set_last_event_id(
+        const RoomId &roomId,
+        EventId eventId)
+    {
+      acknowledge(roomId, eventId);
+    }
+
+    [[nodiscard]] EventId last_event_id(
+        const RoomId &roomId) const;
 
     /**
      * @brief Return the number of joined rooms.
@@ -414,6 +462,9 @@ namespace vix::realtime
     /** @brief Current active transport connection. */
     ConnectionPtr connection_{};
 
+    /** @brief Most recently detached connection, returned on resume. */
+    ConnectionPtr detachedConnection_{};
+
     /** @brief Token used to resume a detached session. */
     ResumeToken resumeToken_{};
 
@@ -428,6 +479,9 @@ namespace vix::realtime
 
     /** @brief Joined rooms in deterministic identifier order. */
     std::set<RoomId> rooms_{};
+
+    /** @brief Latest acknowledged event per joined room. */
+    std::unordered_map<RoomId, EventId> roomCursors_{};
 
     /** @brief Non-authoritative application session metadata. */
     JsonObject metadata_{};

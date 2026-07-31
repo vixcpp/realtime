@@ -20,6 +20,7 @@
 #include <utility>
 
 #include <vix/realtime/errors.hpp>
+#include <vix/realtime/room.hpp>
 
 namespace vix::realtime
 {
@@ -604,11 +605,116 @@ namespace vix::realtime
     return iterator->second;
   }
 
+  bool RoomDirectory::register_room(
+      const RoomPtr &room)
+  {
+    if (!room)
+    {
+      throw Error{
+          ErrorCode::MissingDependency,
+          "room directory cannot register a null room"};
+    }
+
+    return register_room(
+        room->id(),
+        room);
+  }
+
+  bool RoomDirectory::register_room(
+      const RoomId &roomId,
+      const RoomPtr &room)
+  {
+    if (roomId.empty())
+    {
+      throw Error{
+          ErrorCode::InvalidConfiguration,
+          "room directory registration requires a room identifier"};
+    }
+
+    if (!room)
+    {
+      throw Error{
+          ErrorCode::MissingDependency,
+          "room directory cannot register a null room"};
+    }
+
+    std::lock_guard<std::mutex> lock{mutex_};
+
+    return rooms_.emplace(roomId, room).second;
+  }
+
+  RoomPtr RoomDirectory::find(
+      const RoomId &roomId) const
+  {
+    if (roomId.empty())
+    {
+      return nullptr;
+    }
+
+    std::lock_guard<std::mutex> lock{mutex_};
+
+    const auto iterator =
+        rooms_.find(roomId);
+
+    if (iterator == rooms_.end())
+    {
+      return nullptr;
+    }
+
+    return iterator->second;
+  }
+
+  RoomPtr RoomDirectory::find_room(
+      const RoomId &roomId) const
+  {
+    return find(roomId);
+  }
+
+  bool RoomDirectory::remove(
+      const RoomId &roomId)
+  {
+    if (roomId.empty())
+    {
+      return false;
+    }
+
+    std::lock_guard<std::mutex> lock{mutex_};
+
+    return rooms_.erase(roomId) != 0;
+  }
+
+  bool RoomDirectory::unregister_room(
+      const RoomId &roomId)
+  {
+    return remove(roomId);
+  }
+
+  bool RoomDirectory::contains(
+      const RoomId &roomId) const
+  {
+    return find(roomId) != nullptr;
+  }
+
+  bool RoomDirectory::contains_room(
+      const RoomId &roomId) const
+  {
+    return contains(roomId);
+  }
+
+  std::size_t RoomDirectory::room_count() const
+  {
+    std::lock_guard<std::mutex> lock{mutex_};
+
+    return rooms_.size();
+  }
+
   std::size_t RoomDirectory::size() const
   {
     std::lock_guard<std::mutex> lock{mutex_};
 
-    return owners_.size();
+    return rooms_.empty()
+               ? owners_.size()
+               : rooms_.size();
   }
 
   std::size_t RoomDirectory::active_count(
@@ -665,7 +771,13 @@ namespace vix::realtime
 
     std::lock_guard<std::mutex> lock{mutex_};
 
-    return owners_.erase(roomId) != 0;
+    const bool removedOwner =
+        owners_.erase(roomId) != 0;
+
+    const bool removedRoom =
+        rooms_.erase(roomId) != 0;
+
+    return removedOwner || removedRoom;
   }
 
   void RoomDirectory::clear()
@@ -674,6 +786,7 @@ namespace vix::realtime
 
     owners_.clear();
     generations_.clear();
+    rooms_.clear();
   }
 
 } // namespace vix::realtime

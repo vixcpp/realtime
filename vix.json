@@ -1,0 +1,92 @@
+{
+  "namespace": "vix",
+  "name": "realtime",
+  "displayName": "Vix Realtime",
+  "version": "0.1.0",
+  "type": "library",
+  "license": "MIT",
+  "description": "Stateful realtime runtime for authoritative rooms, commands, events, sessions, snapshots, replay, presence, and reconnection in C++.",
+  "repository": "https://github.com/vixcpp/realtime.git",
+  "documentation": "https://github.com/vixcpp/realtime#readme",
+  "include": "include",
+  "standard": "c++20",
+  "keywords": [
+    "vix",
+    "cpp",
+    "realtime",
+    "rooms",
+    "events",
+    "commands",
+    "sessions",
+    "presence",
+    "snapshots",
+    "replay",
+    "reconnection",
+    "websocket"
+  ],
+  "authors": [
+    {
+      "name": "Gaspard Kirira"
+    }
+  ],
+  "maintainers": [
+    {
+      "name": "Gaspard Kirira"
+    }
+  ],
+  "exports": {
+    "modules": [
+      "vix::realtime"
+    ],
+    "namespaces": [
+      "vix::realtime"
+    ]
+  },
+  "constraints": {
+    "platforms": [
+      "linux",
+      "macos",
+      "windows"
+    ]
+  },
+  "deps": [
+    {
+      "id": "vix/core",
+      "version": "*"
+    },
+    {
+      "id": "vix/error",
+      "version": "*"
+    },
+    {
+      "id": "vix/json",
+      "version": "*"
+    },
+    {
+      "id": "vix/async",
+      "version": "*"
+    },
+    {
+      "id": "vix/sync",
+      "version": "*"
+    },
+    {
+      "id": "vix/time",
+      "version": "*"
+    },
+    {
+      "id": "vix/utils",
+      "version": "*"
+    },
+    {
+      "id": "vix/websocket",
+      "version": "*",
+      "optional": true
+    },
+    {
+      "id": "vix/db",
+      "version": "*",
+      "optional": true
+    }
+  ]
+}

@@ -371,20 +371,9 @@ namespace vix::realtime
             nodeId,
             sharedFactory,
             eventStore,
-            snapshotStore
+            snapshotStore);
       }
       else if constexpr (
-          std::constructible_from <
-              ManagerType,
-          Config,
-          NodeId,
-          SharedFactory,
-          std::shared_ptr<
-              MemoryEventStore>,
-          std::shared)
-        ;
-    }
-    else if constexpr (
         std::constructible_from<
             ManagerType,
             Config,

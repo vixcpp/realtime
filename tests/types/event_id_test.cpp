@@ -196,11 +196,11 @@ namespace vix::realtime
           EventIdValue{42}};
 
       EXPECT_EQ(
-          empty.value(),
+          to_string(empty),
           "0");
 
       EXPECT_EQ(
-          eventId.value(),
+          to_string(eventId),
           "42");
     }
 

@@ -130,9 +130,23 @@ namespace vix::realtime
   }
 
   RoomEvent &RoomEvent::set_audience(
-      EventAudience value) noexcept
+      EventAudience value)
   {
+    const EventAudience previous =
+        audience_;
+
     audience_ = value;
+
+    try
+    {
+      validate();
+    }
+    catch (...)
+    {
+      audience_ = previous;
+      throw;
+    }
+
     return *this;
   }
 

@@ -249,7 +249,7 @@ namespace vix::realtime
 
   } // namespace
 
-  struct WebSocketAdapter::State
+  struct AdapterState
   {
     /** @brief Protects callbacks and connection maps. */
     mutable std::mutex mutex{};
@@ -279,13 +279,17 @@ namespace vix::realtime
         byId{};
   };
 
+  struct WebSocketAdapter::State : AdapterState
+  {
+  };
+
   namespace
   {
     /**
      * @brief Generate the next adapter connection identifier.
      */
     [[nodiscard]] ConnectionId make_connection_id(
-        WebSocketAdapter::State &state)
+        AdapterState &state)
     {
       const std::uint64_t value =
           state.nextConnectionId.fetch_add(
@@ -301,7 +305,7 @@ namespace vix::realtime
      * @brief Copy the current error callback.
      */
     [[nodiscard]] TransportErrorHandler error_handler(
-        const std::shared_ptr<WebSocketAdapter::State> &state)
+        const std::shared_ptr<AdapterState> &state)
     {
       std::lock_guard<std::mutex> lock{
           state->mutex};
@@ -318,7 +322,7 @@ namespace vix::realtime
      * @brief Report one transport failure without propagating callback errors.
      */
     void report_error(
-        const std::shared_ptr<WebSocketAdapter::State> &state,
+        const std::shared_ptr<AdapterState> &state,
         ConnectionPtr connection,
         ErrorCode code,
         std::string message) noexcept
@@ -348,7 +352,7 @@ namespace vix::realtime
      */
     [[nodiscard]] std::shared_ptr<WebSocketConnection>
     find_session_connection(
-        const std::shared_ptr<WebSocketAdapter::State> &state,
+        const std::shared_ptr<AdapterState> &state,
         vix::websocket::Session &session)
     {
       std::lock_guard<std::mutex> lock{
@@ -374,7 +378,7 @@ namespace vix::realtime
      * @brief Process one WebSocket open callback.
      */
     void handle_open(
-        const std::shared_ptr<WebSocketAdapter::State> &state,
+        const std::shared_ptr<AdapterState> &state,
         vix::websocket::Session &session)
     {
       std::shared_ptr<WebSocketConnection> connection;
@@ -456,7 +460,7 @@ namespace vix::realtime
      * @brief Process one raw WebSocket message.
      */
     void handle_message(
-        const std::shared_ptr<WebSocketAdapter::State> &state,
+        const std::shared_ptr<AdapterState> &state,
         vix::websocket::Session &session,
         const std::string &message)
     {
@@ -567,7 +571,7 @@ namespace vix::realtime
      * @brief Process one WebSocket close callback.
      */
     void handle_close(
-        const std::shared_ptr<WebSocketAdapter::State> &state,
+        const std::shared_ptr<AdapterState> &state,
         vix::websocket::Session &session)
     {
       std::shared_ptr<WebSocketConnection> connection;
@@ -619,7 +623,7 @@ namespace vix::realtime
      * @brief Process one WebSocket transport error callback.
      */
     void handle_websocket_error(
-        const std::shared_ptr<WebSocketAdapter::State> &state,
+        const std::shared_ptr<AdapterState> &state,
         vix::websocket::Session &session,
         const std::string &message)
     {

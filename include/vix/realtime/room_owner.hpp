@@ -19,7 +19,9 @@
 #include <chrono>
 #include <cstdint>
 #include <optional>
+#include <set>
 #include <string_view>
+#include <vector>
 
 #include <vix/realtime/api.hpp>
 #include <vix/realtime/node_id.hpp>
@@ -120,6 +122,32 @@ namespace vix::realtime
         Timestamp acquiredAt = SystemClock::now(),
         std::optional<Timestamp> expiresAt = std::nullopt,
         JsonObject metadata = {});
+
+    explicit RoomOwner(NodeId nodeId);
+
+    void set_node_id(NodeId nodeId);
+
+    [[nodiscard]] bool acquire(const RoomId &roomId);
+
+    [[nodiscard]] bool claim(const RoomId &roomId);
+
+    [[nodiscard]] bool release(const RoomId &roomId);
+
+    [[nodiscard]] bool owns(const RoomId &roomId) const;
+
+    [[nodiscard]] bool owns_room(const RoomId &roomId) const;
+
+    [[nodiscard]] bool contains(const RoomId &roomId) const;
+
+    [[nodiscard]] bool has_room(const RoomId &roomId) const;
+
+    [[nodiscard]] std::size_t room_count() const;
+
+    [[nodiscard]] bool empty() const;
+
+    [[nodiscard]] std::vector<RoomId> rooms() const;
+
+    void clear();
 
     /**
      * @brief Create a leased ownership claim.
@@ -382,6 +410,9 @@ namespace vix::realtime
 
     /** @brief Non-authoritative ownership metadata. */
     JsonObject metadata_{};
+
+    /** @brief Compatibility multi-room ownership set. */
+    std::set<RoomId> ownedRooms_{};
   };
 
 } // namespace vix::realtime

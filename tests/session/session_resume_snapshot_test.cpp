@@ -106,7 +106,7 @@ namespace vix::realtime
       {
       }
 
-      [[nodiscard]] std::string_view
+      [[nodiscard]] const ConnectionId &
       id() const noexcept override
       {
         return identifier_;
@@ -132,7 +132,7 @@ namespace vix::realtime
         open_ = false;
       }
 
-      [[nodiscard]] const JsonObject &
+      [[nodiscard]] JsonObject
       metadata() const noexcept override
       {
         return metadata_;
@@ -181,7 +181,7 @@ namespace vix::realtime
       }
 
     private:
-      std::string identifier_{};
+      ConnectionId identifier_{};
       bool open_{true};
       JsonObject metadata_{};
 

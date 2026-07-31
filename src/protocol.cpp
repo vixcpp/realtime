@@ -672,7 +672,15 @@ namespace vix::realtime::protocol
     {
       return roomId_.has_value() &&
              roomVersion_.has_value() &&
+             eventId_.has_value() &&
+             !eventId_->empty() &&
              schemaVersion_.has_value();
+    }
+
+    if (kind_ == MessageKind::Request)
+    {
+      return roomId_.has_value() &&
+             sessionId_.has_value();
     }
 
     return true;
@@ -756,11 +764,35 @@ namespace vix::realtime::protocol
             "realtime snapshot envelope requires a room version"};
       }
 
+      if (!eventId_ || eventId_->empty())
+      {
+        throw Error{
+            ErrorCode::InvalidProtocolMessage,
+            "realtime snapshot envelope requires an event identifier"};
+      }
+
       if (!schemaVersion_)
       {
         throw Error{
             ErrorCode::InvalidProtocolMessage,
             "realtime snapshot envelope requires a schema version"};
+      }
+    }
+
+    if (kind_ == MessageKind::Request)
+    {
+      if (!roomId_)
+      {
+        throw Error{
+            ErrorCode::InvalidProtocolMessage,
+            "realtime request envelope requires a room identifier"};
+      }
+
+      if (!sessionId_)
+      {
+        throw Error{
+            ErrorCode::InvalidProtocolMessage,
+            "realtime request envelope requires a session identifier"};
       }
     }
   }

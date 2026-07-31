@@ -160,9 +160,7 @@ namespace vix::realtime
 
     if (after > stream.lastEventId)
     {
-      throw Error{
-          ErrorCode::ReplayUnavailable,
-          "event replay cursor is ahead of the room stream"};
+      return {};
     }
 
     const auto first =

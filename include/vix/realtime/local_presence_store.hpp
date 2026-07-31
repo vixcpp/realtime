@@ -176,6 +176,22 @@ namespace vix::realtime
         std::chrono::milliseconds timeout) override;
 
     /**
+     * @brief Remove expired presence records.
+     *
+     * Compatibility alias for prune_stale.
+     *
+     * @param now Current timestamp.
+     * @param timeout Maximum permitted inactivity duration.
+     * @return Number of removed records.
+     */
+    std::size_t prune_expired(
+        Timestamp now,
+        std::chrono::milliseconds timeout)
+    {
+      return prune_stale(now, timeout);
+    }
+
+    /**
      * @brief Return the number of stored presences in a room.
      *
      * @param roomId Room identifier.

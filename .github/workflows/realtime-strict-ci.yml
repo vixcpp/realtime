@@ -1,0 +1,1218 @@
+name: Realtime Strict CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - dev
+      - release/**
+    paths:
+      - ".github/workflows/realtime-strict-ci.yml"
+      - "CMakeLists.txt"
+      - "CMakePresets.json"
+      - "cmake/**"
+      - "include/**"
+      - "src/**"
+      - "tests/**"
+      - "examples/**"
+      - "config/**"
+      - "docs/**"
+      - "scripts/**"
+      - "README.md"
+      - "CHANGELOG.md"
+      - "vix.json"
+
+  pull_request:
+    branches:
+      - main
+      - master
+      - dev
+      - release/**
+    paths:
+      - ".github/workflows/realtime-strict-ci.yml"
+      - "CMakeLists.txt"
+      - "CMakePresets.json"
+      - "cmake/**"
+      - "include/**"
+      - "src/**"
+      - "tests/**"
+      - "examples/**"
+      - "config/**"
+      - "docs/**"
+      - "scripts/**"
+      - "README.md"
+      - "CHANGELOG.md"
+      - "vix.json"
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: realtime-strict-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  BUILD_JOBS: 2
+  VIX_GIT_BRANCH: dev
+  DEPS: >
+    build-essential
+    cmake
+    ninja-build
+    clang
+    llvm
+    lld
+    g++
+    cppcheck
+    clang-tidy
+    valgrind
+    pkg-config
+    git
+    curl
+    ca-certificates
+    libasio-dev
+    nlohmann-json3-dev
+    libspdlog-dev
+    libfmt-dev
+    libssl-dev
+    sqlite3
+    libsqlite3-dev
+
+jobs:
+  build-and-test:
+    name: Build and Test (${{ matrix.compiler }}, ${{ matrix.build_type }}, websocket=${{ matrix.websocket }}, examples=${{ matrix.examples }}, sanitizers=${{ matrix.sanitizers }})
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    strategy:
+      fail-fast: false
+
+      matrix:
+        include:
+          - compiler: gcc
+            build_type: Debug
+            websocket: "ON"
+            examples: "ON"
+            sanitizers: "OFF"
+            run_examples: "ON"
+
+          - compiler: gcc
+            build_type: Release
+            websocket: "OFF"
+            examples: "ON"
+            sanitizers: "OFF"
+            run_examples: "ON"
+
+          - compiler: clang
+            build_type: Debug
+            websocket: "ON"
+            examples: "OFF"
+            sanitizers: "ON"
+            run_examples: "OFF"
+
+          - compiler: clang
+            build_type: Release
+            websocket: "OFF"
+            examples: "OFF"
+            sanitizers: "OFF"
+            run_examples: "OFF"
+
+    env:
+      ASAN_OPTIONS: detect_leaks=1:halt_on_error=1:strict_string_checks=1:check_initialization_order=1
+      UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+
+    steps:
+      - name: Checkout realtime repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install system dependencies
+        run: |
+          set -euxo pipefail
+
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends $DEPS
+
+          test -f /usr/include/asio.hpp
+
+      - name: Select compiler
+        run: |
+          set -euxo pipefail
+
+          if [ "${{ matrix.compiler }}" = "clang" ]; then
+            echo "CC=clang" >> "$GITHUB_ENV"
+            echo "CXX=clang++" >> "$GITHUB_ENV"
+          else
+            echo "CC=gcc" >> "$GITHUB_ENV"
+            echo "CXX=g++" >> "$GITHUB_ENV"
+          fi
+
+      - name: Fetch sibling dependencies
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          rm -rf \
+            ../error \
+            ../path \
+            ../env \
+            ../utils \
+            ../async \
+            ../io \
+            ../json \
+            ../template \
+            ../core \
+            ../sync \
+            ../time \
+            ../websocket
+
+          clone_vix_dep() {
+            local repository="$1"
+            local destination="$2"
+
+            shift 2
+
+            local url="https://github.com/vixcpp/${repository}.git"
+
+            if git ls-remote \
+              --exit-code \
+              --heads \
+              "$url" \
+              "${VIX_GIT_BRANCH}" \
+              >/dev/null 2>&1
+            then
+              git clone \
+                --depth 1 \
+                --branch "${VIX_GIT_BRANCH}" \
+                "$@" \
+                "$url" \
+                "$destination"
+            else
+              git clone \
+                --depth 1 \
+                --branch main \
+                "$@" \
+                "$url" \
+                "$destination"
+            fi
+          }
+
+          clone_vix_dep error ../error
+          clone_vix_dep path ../path
+          clone_vix_dep env ../env
+          clone_vix_dep utils ../utils
+          clone_vix_dep async ../async --recurse-submodules
+          clone_vix_dep io ../io
+          clone_vix_dep json ../json
+          clone_vix_dep template ../template
+          clone_vix_dep core ../core
+          clone_vix_dep sync ../sync
+          clone_vix_dep time ../time
+          clone_vix_dep websocket ../websocket
+
+          git -C ../async \
+            submodule update \
+            --init \
+            --recursive \
+            --depth 1 \
+            || true
+
+      - name: Prepare Asio for async
+        run: |
+          set -euxo pipefail
+
+          rm -rf ../async/third_party/asio/include
+
+          mkdir -p \
+            ../async/third_party/asio/include
+
+          cp -r \
+            /usr/include/asio* \
+            ../async/third_party/asio/include/
+
+          test -f \
+            ../async/third_party/asio/include/asio.hpp
+
+      - name: Verify sibling dependencies
+        run: |
+          set -euxo pipefail
+
+          test -f ../error/CMakeLists.txt
+          test -f ../path/CMakeLists.txt
+          test -f ../env/CMakeLists.txt
+          test -f ../utils/CMakeLists.txt
+          test -f ../async/CMakeLists.txt
+          test -f ../io/CMakeLists.txt
+          test -f ../json/CMakeLists.txt
+          test -f ../template/CMakeLists.txt
+          test -f ../core/CMakeLists.txt
+          test -f ../sync/CMakeLists.txt
+          test -f ../time/CMakeLists.txt
+          test -f ../websocket/CMakeLists.txt
+
+          test -f \
+            ../json/include/vix/json/Simple.hpp
+
+          test -f \
+            ../async/third_party/asio/include/asio.hpp
+
+      - name: Export dependency include paths
+        run: |
+          set -euxo pipefail
+
+          EXTRA_PATHS="$GITHUB_WORKSPACE/../error/include"
+          EXTRA_PATHS="$EXTRA_PATHS:$GITHUB_WORKSPACE/../path/include"
+          EXTRA_PATHS="$EXTRA_PATHS:$GITHUB_WORKSPACE/../env/include"
+          EXTRA_PATHS="$EXTRA_PATHS:$GITHUB_WORKSPACE/../utils/include"
+          EXTRA_PATHS="$EXTRA_PATHS:$GITHUB_WORKSPACE/../async/include"
+          EXTRA_PATHS="$EXTRA_PATHS:$GITHUB_WORKSPACE/../io/include"
+          EXTRA_PATHS="$EXTRA_PATHS:$GITHUB_WORKSPACE/../json/include"
+          EXTRA_PATHS="$EXTRA_PATHS:$GITHUB_WORKSPACE/../template/include"
+          EXTRA_PATHS="$EXTRA_PATHS:$GITHUB_WORKSPACE/../core/include"
+          EXTRA_PATHS="$EXTRA_PATHS:$GITHUB_WORKSPACE/../sync/include"
+          EXTRA_PATHS="$EXTRA_PATHS:$GITHUB_WORKSPACE/../time/include"
+          EXTRA_PATHS="$EXTRA_PATHS:$GITHUB_WORKSPACE/../websocket/include"
+
+          echo \
+            "CPATH=$EXTRA_PATHS${CPATH:+:$CPATH}" \
+            >> "$GITHUB_ENV"
+
+          echo \
+            "CPLUS_INCLUDE_PATH=$EXTRA_PATHS${CPLUS_INCLUDE_PATH:+:$CPLUS_INCLUDE_PATH}" \
+            >> "$GITHUB_ENV"
+
+      - name: Configure realtime
+        run: |
+          set -euxo pipefail
+
+          cmake \
+            -S . \
+            -B build \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DVIX_REALTIME_BUILD_TESTS=ON \
+            -DVIX_REALTIME_BUILD_EXAMPLES=${{ matrix.examples }} \
+            -DVIX_REALTIME_WITH_WEBSOCKET=${{ matrix.websocket }} \
+            -DVIX_REALTIME_WITH_POSTGRES=OFF \
+            -DVIX_REALTIME_FETCH_DEPENDENCIES=OFF \
+            -DVIX_REALTIME_ENABLE_INSTALL=OFF \
+            -DVIX_ENABLE_SANITIZERS=${{ matrix.sanitizers }} \
+            -DVIX_WEBSOCKET_WITH_JSON=AUTO \
+            -DVIX_WEBSOCKET_BUILD_EXAMPLES=OFF \
+            -DVIX_WEBSOCKET_FETCH_CORE=OFF \
+            -DVIX_WEBSOCKET_FETCH_UTILS=OFF \
+            -DVIX_CORE_WITH_OPENSSL=OFF \
+            -DVIX_CORE_WITH_TEMPLATE=OFF \
+            -DVIX_CORE_WITH_UI=OFF \
+            -DVIX_CORE_WITH_MYSQL=OFF
+
+      - name: Build realtime
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          cmake \
+            --build build \
+            -j"${BUILD_JOBS}" \
+            2>&1 \
+            | tee build.log
+
+      - name: Reject realtime compiler warnings
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          REALTIME_ROOT="$(realpath "$GITHUB_WORKSPACE")"
+
+          WARNINGS="$(
+            grep -F "${REALTIME_ROOT}/" build.log \
+              | grep -E '/(include|src|tests|examples)/.*warning:' \
+              || true
+          )"
+
+          if [ -n "$WARNINGS" ]; then
+            echo "$WARNINGS"
+            echo "::error::Realtime sources produced compiler warnings."
+            exit 1
+          fi
+
+          echo "No compiler warnings found in realtime sources."
+
+      - name: List registered tests
+        run: |
+          set -euxo pipefail
+
+          ctest \
+            --test-dir build \
+            -N \
+            | tee ctest-list.log
+
+          grep -Eq \
+            'Total Tests: [1-9][0-9]*' \
+            ctest-list.log
+
+      - name: Run realtime tests
+        run: |
+          set -euxo pipefail
+
+          ctest \
+            --test-dir build \
+            --output-on-failure \
+            --timeout 120
+
+      - name: Verify example executables
+        if: matrix.run_examples == 'ON'
+        run: |
+          set -euxo pipefail
+
+          test -x \
+            build/examples/counter/vix_realtime_example_counter
+
+          test -x \
+            build/examples/shared_room/vix_realtime_example_shared_room
+
+          test -x \
+            build/examples/chat/vix_realtime_example_chat
+
+          test -x \
+            build/examples/reconnect/vix_realtime_example_reconnect
+
+      - name: Run counter example
+        if: matrix.run_examples == 'ON'
+        run: |
+          set -euxo pipefail
+
+          ./build/examples/counter/vix_realtime_example_counter \
+            | tee counter-example.log
+
+          grep -F \
+            "restored value: 6" \
+            counter-example.log
+
+          grep -F \
+            "restored last event: 3" \
+            counter-example.log
+
+      - name: Run shared room example
+        if: matrix.run_examples == 'ON'
+        run: |
+          set -euxo pipefail
+
+          ./build/examples/shared_room/vix_realtime_example_shared_room \
+            | tee shared-room-example.log
+
+          grep -F \
+            "members (2):" \
+            shared-room-example.log
+
+          grep -F \
+            "final snapshot version=3 objects=1" \
+            shared-room-example.log
+
+      - name: Run chat example
+        if: matrix.run_examples == 'ON'
+        run: |
+          set -euxo pipefail
+
+          ./build/examples/chat/vix_realtime_example_chat \
+            | tee chat-example.log
+
+          grep -F \
+            "chat history (4 messages)" \
+            chat-example.log
+
+          grep -F \
+            "restored last event: 4" \
+            chat-example.log
+
+      - name: Run reconnect example
+        if: matrix.run_examples == 'ON'
+        run: |
+          set -euxo pipefail
+
+          ./build/examples/reconnect/vix_realtime_example_reconnect \
+            | tee reconnect-example.log
+
+          grep -F \
+            "short replay contains 3 event(s)" \
+            reconnect-example.log
+
+          grep -F \
+            "snapshot fallback version=3" \
+            reconnect-example.log
+
+          grep -F \
+            "restored authoritative score: 20" \
+            reconnect-example.log
+
+  static-analysis:
+    name: Static Analysis
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+
+    steps:
+      - name: Checkout realtime repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install system dependencies
+        run: |
+          set -euxo pipefail
+
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends $DEPS
+
+          test -f /usr/include/asio.hpp
+
+      - name: Fetch sibling dependencies
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          rm -rf \
+            ../error \
+            ../path \
+            ../env \
+            ../utils \
+            ../async \
+            ../io \
+            ../json \
+            ../template \
+            ../core \
+            ../sync \
+            ../time \
+            ../websocket
+
+          clone_vix_dep() {
+            local repository="$1"
+            local destination="$2"
+
+            shift 2
+
+            local url="https://github.com/vixcpp/${repository}.git"
+
+            if git ls-remote \
+              --exit-code \
+              --heads \
+              "$url" \
+              "${VIX_GIT_BRANCH}" \
+              >/dev/null 2>&1
+            then
+              git clone \
+                --depth 1 \
+                --branch "${VIX_GIT_BRANCH}" \
+                "$@" \
+                "$url" \
+                "$destination"
+            else
+              git clone \
+                --depth 1 \
+                --branch main \
+                "$@" \
+                "$url" \
+                "$destination"
+            fi
+          }
+
+          clone_vix_dep error ../error
+          clone_vix_dep path ../path
+          clone_vix_dep env ../env
+          clone_vix_dep utils ../utils
+          clone_vix_dep async ../async --recurse-submodules
+          clone_vix_dep io ../io
+          clone_vix_dep json ../json
+          clone_vix_dep template ../template
+          clone_vix_dep core ../core
+          clone_vix_dep sync ../sync
+          clone_vix_dep time ../time
+          clone_vix_dep websocket ../websocket
+
+          git -C ../async \
+            submodule update \
+            --init \
+            --recursive \
+            --depth 1 \
+            || true
+
+      - name: Prepare Asio for async
+        run: |
+          set -euxo pipefail
+
+          rm -rf ../async/third_party/asio/include
+
+          mkdir -p \
+            ../async/third_party/asio/include
+
+          cp -r \
+            /usr/include/asio* \
+            ../async/third_party/asio/include/
+
+          test -f \
+            ../async/third_party/asio/include/asio.hpp
+
+      - name: Export dependency include paths
+        run: |
+          set -euxo pipefail
+
+          EXTRA_PATHS="$GITHUB_WORKSPACE/../error/include"
+          EXTRA_PATHS="$EXTRA_PATHS:$GITHUB_WORKSPACE/../path/include"
+          EXTRA_PATHS="$EXTRA_PATHS:$GITHUB_WORKSPACE/../env/include"
+          EXTRA_PATHS="$EXTRA_PATHS:$GITHUB_WORKSPACE/../utils/include"
+          EXTRA_PATHS="$EXTRA_PATHS:$GITHUB_WORKSPACE/../async/include"
+          EXTRA_PATHS="$EXTRA_PATHS:$GITHUB_WORKSPACE/../io/include"
+          EXTRA_PATHS="$EXTRA_PATHS:$GITHUB_WORKSPACE/../json/include"
+          EXTRA_PATHS="$EXTRA_PATHS:$GITHUB_WORKSPACE/../template/include"
+          EXTRA_PATHS="$EXTRA_PATHS:$GITHUB_WORKSPACE/../core/include"
+          EXTRA_PATHS="$EXTRA_PATHS:$GITHUB_WORKSPACE/../sync/include"
+          EXTRA_PATHS="$EXTRA_PATHS:$GITHUB_WORKSPACE/../time/include"
+          EXTRA_PATHS="$EXTRA_PATHS:$GITHUB_WORKSPACE/../websocket/include"
+
+          echo \
+            "CPATH=$EXTRA_PATHS${CPATH:+:$CPATH}" \
+            >> "$GITHUB_ENV"
+
+          echo \
+            "CPLUS_INCLUDE_PATH=$EXTRA_PATHS${CPLUS_INCLUDE_PATH:+:$CPLUS_INCLUDE_PATH}" \
+            >> "$GITHUB_ENV"
+
+      - name: Select Clang
+        run: |
+          echo "CC=clang" >> "$GITHUB_ENV"
+          echo "CXX=clang++" >> "$GITHUB_ENV"
+
+      - name: Configure analysis build
+        run: |
+          set -euxo pipefail
+
+          cmake \
+            -S . \
+            -B build-analyze \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DVIX_REALTIME_BUILD_TESTS=ON \
+            -DVIX_REALTIME_BUILD_EXAMPLES=ON \
+            -DVIX_REALTIME_WITH_WEBSOCKET=ON \
+            -DVIX_REALTIME_WITH_POSTGRES=OFF \
+            -DVIX_REALTIME_FETCH_DEPENDENCIES=OFF \
+            -DVIX_REALTIME_ENABLE_INSTALL=OFF \
+            -DVIX_ENABLE_SANITIZERS=OFF \
+            -DVIX_WEBSOCKET_WITH_JSON=AUTO \
+            -DVIX_WEBSOCKET_BUILD_EXAMPLES=OFF \
+            -DVIX_WEBSOCKET_FETCH_CORE=OFF \
+            -DVIX_WEBSOCKET_FETCH_UTILS=OFF \
+            -DVIX_CORE_WITH_OPENSSL=OFF \
+            -DVIX_CORE_WITH_TEMPLATE=OFF \
+            -DVIX_CORE_WITH_UI=OFF \
+            -DVIX_CORE_WITH_MYSQL=OFF
+
+      - name: Build analysis target
+        run: |
+          set -euxo pipefail
+
+          cmake \
+            --build build-analyze \
+            -j"${BUILD_JOBS}"
+
+      - name: Run clang-tidy on realtime sources
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mapfile -d '' FILES < <(
+            find src \
+              -type f \
+              -name '*.cpp' \
+              -print0
+          )
+
+          if [ ${#FILES[@]} -eq 0 ]; then
+            echo "::error::No realtime source files found."
+            exit 1
+          fi
+
+          clang-tidy \
+            -p build-analyze \
+            "${FILES[@]}"
+
+      - name: Run strict cppcheck on library code
+        run: |
+          set -euxo pipefail
+
+          cppcheck \
+            --enable=warning,performance,portability \
+            --std=c++20 \
+            --inconclusive \
+            --error-exitcode=2 \
+            --suppress=missingIncludeSystem \
+            --inline-suppr \
+            include/ \
+            src/
+
+      - name: Run cppcheck style report
+        run: |
+          set -euxo pipefail
+
+          cppcheck \
+            --enable=style \
+            --std=c++20 \
+            --suppress=missingIncludeSystem \
+            --inline-suppr \
+            include/ \
+            src/ \
+            tests/ \
+            examples/ \
+            || true
+
+      - name: Run cppcheck on tests and examples
+        run: |
+          set -euxo pipefail
+
+          cppcheck \
+            --enable=warning,portability \
+            --std=c++20 \
+            --inconclusive \
+            --error-exitcode=2 \
+            --suppress=missingIncludeSystem \
+            --inline-suppr \
+            tests/ \
+            examples/
+
+  valgrind:
+    name: Valgrind Memory Checks
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout realtime repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install system dependencies
+        run: |
+          set -euxo pipefail
+
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends $DEPS
+
+          test -f /usr/include/asio.hpp
+
+      - name: Fetch sibling dependencies
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          rm -rf \
+            ../error \
+            ../path \
+            ../env \
+            ../utils \
+            ../async \
+            ../io \
+            ../json \
+            ../template \
+            ../core \
+            ../sync \
+            ../time
+
+          clone_vix_dep() {
+            local repository="$1"
+            local destination="$2"
+
+            shift 2
+
+            local url="https://github.com/vixcpp/${repository}.git"
+
+            if git ls-remote \
+              --exit-code \
+              --heads \
+              "$url" \
+              "${VIX_GIT_BRANCH}" \
+              >/dev/null 2>&1
+            then
+              git clone \
+                --depth 1 \
+                --branch "${VIX_GIT_BRANCH}" \
+                "$@" \
+                "$url" \
+                "$destination"
+            else
+              git clone \
+                --depth 1 \
+                --branch main \
+                "$@" \
+                "$url" \
+                "$destination"
+            fi
+          }
+
+          clone_vix_dep error ../error
+          clone_vix_dep path ../path
+          clone_vix_dep env ../env
+          clone_vix_dep utils ../utils
+          clone_vix_dep async ../async --recurse-submodules
+          clone_vix_dep io ../io
+          clone_vix_dep json ../json
+          clone_vix_dep template ../template
+          clone_vix_dep core ../core
+          clone_vix_dep sync ../sync
+          clone_vix_dep time ../time
+
+          git -C ../async \
+            submodule update \
+            --init \
+            --recursive \
+            --depth 1 \
+            || true
+
+      - name: Prepare Asio for async
+        run: |
+          set -euxo pipefail
+
+          rm -rf ../async/third_party/asio/include
+
+          mkdir -p \
+            ../async/third_party/asio/include
+
+          cp -r \
+            /usr/include/asio* \
+            ../async/third_party/asio/include/
+
+          test -f \
+            ../async/third_party/asio/include/asio.hpp
+
+      - name: Export dependency include paths
+        run: |
+          set -euxo pipefail
+
+          EXTRA_PATHS="$GITHUB_WORKSPACE/../error/include"
+          EXTRA_PATHS="$EXTRA_PATHS:$GITHUB_WORKSPACE/../path/include"
+          EXTRA_PATHS="$EXTRA_PATHS:$GITHUB_WORKSPACE/../env/include"
+          EXTRA_PATHS="$EXTRA_PATHS:$GITHUB_WORKSPACE/../utils/include"
+          EXTRA_PATHS="$EXTRA_PATHS:$GITHUB_WORKSPACE/../async/include"
+          EXTRA_PATHS="$EXTRA_PATHS:$GITHUB_WORKSPACE/../io/include"
+          EXTRA_PATHS="$EXTRA_PATHS:$GITHUB_WORKSPACE/../json/include"
+          EXTRA_PATHS="$EXTRA_PATHS:$GITHUB_WORKSPACE/../template/include"
+          EXTRA_PATHS="$EXTRA_PATHS:$GITHUB_WORKSPACE/../core/include"
+          EXTRA_PATHS="$EXTRA_PATHS:$GITHUB_WORKSPACE/../sync/include"
+          EXTRA_PATHS="$EXTRA_PATHS:$GITHUB_WORKSPACE/../time/include"
+
+          echo \
+            "CPATH=$EXTRA_PATHS${CPATH:+:$CPATH}" \
+            >> "$GITHUB_ENV"
+
+          echo \
+            "CPLUS_INCLUDE_PATH=$EXTRA_PATHS${CPLUS_INCLUDE_PATH:+:$CPLUS_INCLUDE_PATH}" \
+            >> "$GITHUB_ENV"
+
+      - name: Configure Valgrind build
+        run: |
+          set -euxo pipefail
+
+          cmake \
+            -S . \
+            -B build-valgrind \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DVIX_REALTIME_BUILD_TESTS=ON \
+            -DVIX_REALTIME_BUILD_EXAMPLES=OFF \
+            -DVIX_REALTIME_WITH_WEBSOCKET=OFF \
+            -DVIX_REALTIME_WITH_POSTGRES=OFF \
+            -DVIX_REALTIME_FETCH_DEPENDENCIES=OFF \
+            -DVIX_REALTIME_ENABLE_INSTALL=OFF \
+            -DVIX_ENABLE_SANITIZERS=OFF \
+            -DVIX_CORE_WITH_OPENSSL=OFF \
+            -DVIX_CORE_WITH_TEMPLATE=OFF \
+            -DVIX_CORE_WITH_UI=OFF \
+            -DVIX_CORE_WITH_MYSQL=OFF
+
+      - name: Build Valgrind targets
+        run: |
+          set -euxo pipefail
+
+          cmake \
+            --build build-valgrind \
+            -j"${BUILD_JOBS}"
+
+      - name: List tests before Valgrind
+        run: |
+          set -euxo pipefail
+
+          ctest \
+            --test-dir build-valgrind \
+            -N
+
+      - name: Run Valgrind on test executables
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          FAIL=0
+
+          mapfile -t TEST_BINS < <(
+            find build-valgrind/tests \
+              -type f \
+              -executable \
+              2>/dev/null \
+              | grep -Ev '/CMakeFiles/' \
+              | sort
+          )
+
+          if [ ${#TEST_BINS[@]} -eq 0 ]; then
+            echo "::error::No realtime test executables found."
+            exit 1
+          fi
+
+          for executable in "${TEST_BINS[@]}"; do
+            echo "==> Valgrind: $executable"
+
+            set +e
+
+            timeout 120s \
+              valgrind \
+                --leak-check=full \
+                --show-leak-kinds=all \
+                --track-origins=yes \
+                --errors-for-leak-kinds=definite,indirect,possible \
+                --error-exitcode=99 \
+                "$executable"
+
+            STATUS=$?
+
+            set -e
+
+            if [ "$STATUS" -ne 0 ]; then
+              echo \
+                "::error::Valgrind failed for $executable with status $STATUS"
+
+              FAIL=1
+            fi
+          done
+
+          exit "$FAIL"
+
+  postgres-compile:
+    name: PostgreSQL Store Compile Check
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    steps:
+      - name: Checkout realtime repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install system dependencies
+        run: |
+          set -euxo pipefail
+
+          sudo apt-get update
+
+          sudo apt-get install -y --no-install-recommends \
+            $DEPS \
+            libpq-dev \
+            libpqxx-dev \
+            postgresql-client
+
+          test -f /usr/include/asio.hpp
+
+      - name: Fetch sibling dependencies
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          rm -rf \
+            ../error \
+            ../path \
+            ../env \
+            ../utils \
+            ../async \
+            ../io \
+            ../json \
+            ../template \
+            ../core \
+            ../sync \
+            ../time \
+            ../db
+
+          clone_vix_dep() {
+            local repository="$1"
+            local destination="$2"
+
+            shift 2
+
+            local url="https://github.com/vixcpp/${repository}.git"
+
+            if git ls-remote \
+              --exit-code \
+              --heads \
+              "$url" \
+              "${VIX_GIT_BRANCH}" \
+              >/dev/null 2>&1
+            then
+              git clone \
+                --depth 1 \
+                --branch "${VIX_GIT_BRANCH}" \
+                "$@" \
+                "$url" \
+                "$destination"
+            else
+              git clone \
+                --depth 1 \
+                --branch main \
+                "$@" \
+                "$url" \
+                "$destination"
+            fi
+          }
+
+          clone_vix_dep error ../error
+          clone_vix_dep path ../path
+          clone_vix_dep env ../env
+          clone_vix_dep utils ../utils
+          clone_vix_dep async ../async --recurse-submodules
+          clone_vix_dep io ../io
+          clone_vix_dep json ../json
+          clone_vix_dep template ../template
+          clone_vix_dep core ../core
+          clone_vix_dep sync ../sync
+          clone_vix_dep time ../time
+          clone_vix_dep db ../db
+
+          git -C ../async \
+            submodule update \
+            --init \
+            --recursive \
+            --depth 1 \
+            || true
+
+      - name: Prepare Asio for async
+        run: |
+          set -euxo pipefail
+
+          rm -rf ../async/third_party/asio/include
+
+          mkdir -p \
+            ../async/third_party/asio/include
+
+          cp -r \
+            /usr/include/asio* \
+            ../async/third_party/asio/include/
+
+          test -f \
+            ../async/third_party/asio/include/asio.hpp
+
+      - name: Export dependency include paths
+        run: |
+          set -euxo pipefail
+
+          EXTRA_PATHS="$GITHUB_WORKSPACE/../error/include"
+          EXTRA_PATHS="$EXTRA_PATHS:$GITHUB_WORKSPACE/../path/include"
+          EXTRA_PATHS="$EXTRA_PATHS:$GITHUB_WORKSPACE/../env/include"
+          EXTRA_PATHS="$EXTRA_PATHS:$GITHUB_WORKSPACE/../utils/include"
+          EXTRA_PATHS="$EXTRA_PATHS:$GITHUB_WORKSPACE/../async/include"
+          EXTRA_PATHS="$EXTRA_PATHS:$GITHUB_WORKSPACE/../io/include"
+          EXTRA_PATHS="$EXTRA_PATHS:$GITHUB_WORKSPACE/../json/include"
+          EXTRA_PATHS="$EXTRA_PATHS:$GITHUB_WORKSPACE/../template/include"
+          EXTRA_PATHS="$EXTRA_PATHS:$GITHUB_WORKSPACE/../core/include"
+          EXTRA_PATHS="$EXTRA_PATHS:$GITHUB_WORKSPACE/../sync/include"
+          EXTRA_PATHS="$EXTRA_PATHS:$GITHUB_WORKSPACE/../time/include"
+          EXTRA_PATHS="$EXTRA_PATHS:$GITHUB_WORKSPACE/../db/include"
+
+          echo \
+            "CPATH=$EXTRA_PATHS${CPATH:+:$CPATH}" \
+            >> "$GITHUB_ENV"
+
+          echo \
+            "CPLUS_INCLUDE_PATH=$EXTRA_PATHS${CPLUS_INCLUDE_PATH:+:$CPLUS_INCLUDE_PATH}" \
+            >> "$GITHUB_ENV"
+
+      - name: Configure PostgreSQL build
+        run: |
+          set -euxo pipefail
+
+          cmake \
+            -S . \
+            -B build-postgres \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DVIX_REALTIME_BUILD_TESTS=OFF \
+            -DVIX_REALTIME_BUILD_EXAMPLES=OFF \
+            -DVIX_REALTIME_WITH_WEBSOCKET=OFF \
+            -DVIX_REALTIME_WITH_POSTGRES=ON \
+            -DVIX_REALTIME_FETCH_DEPENDENCIES=OFF \
+            -DVIX_REALTIME_ENABLE_INSTALL=OFF \
+            -DVIX_ENABLE_SANITIZERS=OFF \
+            -DVIX_DB_USE_MYSQL=OFF \
+            -DVIX_DB_USE_SQLITE=ON \
+            -DVIX_DB_USE_POSTGRES=ON \
+            -DVIX_CORE_WITH_OPENSSL=OFF \
+            -DVIX_CORE_WITH_TEMPLATE=OFF \
+            -DVIX_CORE_WITH_UI=OFF \
+            -DVIX_CORE_WITH_MYSQL=OFF
+
+      - name: Build PostgreSQL stores
+        run: |
+          set -euxo pipefail
+
+          cmake \
+            --build build-postgres \
+            --target vix_realtime \
+            -j"${BUILD_JOBS}"
+
+  package-contract:
+    name: Package Contract Check
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout realtime repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate vix.json
+        run: |
+          set -euxo pipefail
+
+          python3 \
+            -m json.tool \
+            vix.json \
+            >/dev/null
+
+      - name: Verify package files
+        run: |
+          set -euxo pipefail
+
+          test -f \
+            cmake/vix_realtimeConfig.cmake.in
+
+          grep -F \
+            "include(CMakeFindDependencyMacro)" \
+            cmake/vix_realtimeConfig.cmake.in
+
+          grep -F \
+            "VixRealtimeTargets.cmake" \
+            cmake/vix_realtimeConfig.cmake.in
+
+          grep -F \
+            "check_required_components" \
+            cmake/vix_realtimeConfig.cmake.in
+
+          grep -F \
+            "include(CMakePackageConfigHelpers)" \
+            CMakeLists.txt
+
+          grep -F \
+            "configure_package_config_file" \
+            CMakeLists.txt
+
+          grep -F \
+            "write_basic_package_version_file" \
+            CMakeLists.txt
+
+          grep -F \
+            "VixRealtimeTargets" \
+            CMakeLists.txt
+
+          grep -F \
+            "EXPORT_NAME realtime" \
+            CMakeLists.txt
+
+          grep -F \
+            "NAMESPACE" \
+            CMakeLists.txt
+
+          grep -F \
+            "vix::" \
+            CMakeLists.txt
+
+      - name: Verify package identity
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          PACKAGE_NAMESPACE="$(
+            python3 -c \
+              'import json; print(json.load(open("vix.json"))["namespace"])'
+          )"
+
+          PACKAGE_NAME="$(
+            python3 -c \
+              'import json; print(json.load(open("vix.json"))["name"])'
+          )"
+
+          PACKAGE_VERSION="$(
+            python3 -c \
+              'import json; print(json.load(open("vix.json"))["version"])'
+          )"
+
+          CMAKE_VERSION="$(
+            sed -n \
+              '/project(/,/)/p' \
+              CMakeLists.txt \
+              | awk '$1 == "VERSION" { print $2; exit }'
+          )"
+
+          test "$PACKAGE_NAMESPACE" = "vix"
+          test "$PACKAGE_NAME" = "realtime"
+          test "$PACKAGE_VERSION" = "$CMAKE_VERSION"
+
+          echo "Package: ${PACKAGE_NAMESPACE}/${PACKAGE_NAME}"
+          echo "Version: ${PACKAGE_VERSION}"
+
+      - name: Verify public umbrella
+        run: |
+          set -euxo pipefail
+
+          test -f \
+            include/vix/realtime.hpp
+
+          grep -R \
+            "namespace vix::realtime" \
+            include/vix/realtime \
+            >/dev/null
+
+  summary:
+    name: Realtime Strict CI Summary
+
+    needs:
+      - build-and-test
+      - static-analysis
+      - valgrind
+      - postgres-compile
+      - package-contract
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Print summary
+        run: |
+          echo "Realtime strict CI completed successfully."
+          echo "- GCC and Clang builds"
+          echo "- Debug and Release configurations"
+          echo "- WebSocket ON and OFF coverage"
+          echo "- Sanitized tests"
+          echo "- Compiler warning enforcement"
+          echo "- Full realtime test suite"
+          echo "- Counter example smoke test"
+          echo "- Shared room example smoke test"
+          echo "- Chat example smoke test"
+          echo "- Reconnection and snapshot fallback smoke test"
+          echo "- Static analysis"
+          echo "- Valgrind memory checks"
+          echo "- PostgreSQL store compile coverage"
+          echo "- Package metadata and CMake contract checks"

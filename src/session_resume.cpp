@@ -16,9 +16,12 @@
 #include <vix/realtime/session_resume.hpp>
 
 #include <cstddef>
+#include <optional>
 #include <utility>
+#include <vector>
 
 #include <vix/realtime/errors.hpp>
+#include <vix/realtime/protocol.hpp>
 
 namespace vix::realtime
 {
@@ -42,6 +45,25 @@ namespace vix::realtime
               internal::TokenGenerator::defaultEntropyBytes,
               "resume");
     }
+  }
+
+  SessionResume::SessionResume(
+      RoomManagerPtr manager,
+      std::chrono::milliseconds resumeWindow,
+      std::shared_ptr<internal::TokenGenerator> tokenGenerator)
+      : SessionResume(
+            std::move(manager),
+            std::move(tokenGenerator))
+  {
+    if (resumeWindow.count() < 0)
+    {
+      throw Error{
+          ErrorCode::InvalidConfiguration,
+          "session resume window must not be negative"};
+    }
+
+    hasCustomResumeWindow_ = true;
+    customResumeWindow_ = resumeWindow;
   }
 
   ResumeToken SessionResume::issue(
@@ -82,6 +104,35 @@ namespace vix::realtime
     return issue(sessionId);
   }
 
+  ResumeToken SessionResume::issue(
+      Session &session)
+  {
+    require_enabled();
+
+    if (session.id().empty() ||
+        session.closed())
+    {
+      throw Error{
+          ErrorCode::SessionExpired,
+          "closed session cannot receive a resume token"};
+    }
+
+    std::lock_guard<std::mutex> lock{mutex_};
+
+    ResumeToken token =
+        tokenGenerator_->generate();
+
+    session.set_resume_token(token);
+
+    return token;
+  }
+
+  ResumeToken SessionResume::rotate(
+      Session &session)
+  {
+    return issue(session);
+  }
+
   bool SessionResume::revoke(
       const SessionId &sessionId)
   {
@@ -101,6 +152,26 @@ namespace vix::realtime
         !session->resume_token().empty();
 
     session->clear_resume_token();
+
+    return hadToken;
+  }
+
+  bool SessionResume::revoke(
+      Session &session)
+  {
+    if (session.id().empty())
+    {
+      throw Error{
+          ErrorCode::SessionNotFound,
+          "resume token revocation requires a session identifier"};
+    }
+
+    std::lock_guard<std::mutex> lock{mutex_};
+
+    const bool hadToken =
+        !session.resume_token().empty();
+
+    session.clear_resume_token();
 
     return hadToken;
   }
@@ -132,6 +203,37 @@ namespace vix::realtime
 
       const ResumeToken storedToken =
           session->resume_token();
+
+      return tokenGenerator_->accepts(storedToken) &&
+             secure_equal(
+                 storedToken,
+                 token);
+    }
+    catch (...)
+    {
+      return false;
+    }
+  }
+
+  bool SessionResume::matches(
+      const Session &session,
+      std::string_view token) const noexcept
+  {
+    try
+    {
+      if (!manager_->config().enableSessionResume ||
+          session.id().empty() ||
+          session.closed() ||
+          token.empty() ||
+          !tokenGenerator_->accepts(token))
+      {
+        return false;
+      }
+
+      std::lock_guard<std::mutex> lock{mutex_};
+
+      const ResumeToken storedToken =
+          session.resume_token();
 
       return tokenGenerator_->accepts(storedToken) &&
              secure_equal(
@@ -182,6 +284,30 @@ namespace vix::realtime
       }
 
       return session->can_resume(
+          now,
+          resume_window());
+    }
+    catch (...)
+    {
+      return false;
+    }
+  }
+
+  bool SessionResume::can_resume(
+      const Session &session,
+      std::string_view token,
+      Timestamp now) const noexcept
+  {
+    try
+    {
+      if (!matches(
+              session,
+              token))
+      {
+        return false;
+      }
+
+      return session.can_resume(
           now,
           resume_window());
     }
@@ -344,9 +470,238 @@ namespace vix::realtime
         rotateToken};
   }
 
+  SessionResumeResult SessionResume::resume(
+      const SessionPtr &session,
+      ConnectionPtr connection,
+      std::string_view token,
+      Timestamp now,
+      bool rotateToken)
+  {
+    if (!session)
+    {
+      throw Error{
+          ErrorCode::InvalidResumeToken,
+          "session resume requires a session"};
+    }
+
+    return resume(
+        *session,
+        std::move(connection),
+        token,
+        now,
+        rotateToken);
+  }
+
+  SessionResumeResult SessionResume::resume(
+      Session &session,
+      ConnectionPtr connection,
+      std::string_view token,
+      Timestamp now,
+      bool rotateToken)
+  {
+    require_enabled();
+
+    if (session.id().empty())
+    {
+      throw Error{
+          ErrorCode::InvalidResumeToken,
+          "session resume requires a session identifier"};
+    }
+
+    if (!connection)
+    {
+      throw Error{
+          ErrorCode::ConnectionNotAttached,
+          "session resume requires a connection"};
+    }
+
+    if (connection->id().empty())
+    {
+      throw Error{
+          ErrorCode::ConnectionNotAttached,
+          "session resume connection requires an identifier"};
+    }
+
+    if (!connection->is_open())
+    {
+      throw Error{
+          ErrorCode::ConnectionNotAttached,
+          "session resume requires an open connection"};
+    }
+
+    std::lock_guard<std::mutex> lock{mutex_};
+
+    validate_token_locked(
+        std::shared_ptr<Session>(
+            &session,
+            [](Session *) {}),
+        token);
+
+    if (session.closed())
+    {
+      throw Error{
+          ErrorCode::SessionExpired,
+          "logical session is permanently closed"};
+    }
+
+    if (session.connected())
+    {
+      throw Error{
+          ErrorCode::InvalidResumeToken,
+          "logical session already has an active connection"};
+    }
+
+    const std::optional<Timestamp> detachedAt =
+        session.detached_at();
+
+    if (!detachedAt)
+    {
+      throw Error{
+          ErrorCode::InvalidResumeToken,
+          "logical session has not been detached"};
+    }
+
+    if (now < *detachedAt)
+    {
+      throw Error{
+          ErrorCode::CorruptedState,
+          "session resume timestamp precedes detachment"};
+    }
+
+    if (!session.can_resume(
+            now,
+            resume_window()))
+    {
+      throw Error{
+          ErrorCode::SessionExpired,
+          "logical session resume window has expired"};
+    }
+
+    ResumeToken nextToken =
+        session.resume_token();
+
+    if (rotateToken)
+    {
+      nextToken =
+          tokenGenerator_->generate();
+    }
+
+    ConnectionPtr replacedConnection =
+        session.attach(
+            connection,
+            now);
+
+    try
+    {
+      if (rotateToken)
+      {
+        session.set_resume_token(
+            nextToken);
+      }
+
+      for (const RoomId &roomId : session.rooms())
+      {
+        EventId replayCursor =
+            session.last_event_id(roomId);
+
+        std::vector<RoomEvent> events =
+            manager_->event_store()->load_after(
+                roomId,
+                replayCursor,
+                manager_->config().maxReplayEvents + 1);
+
+        if (events.size() >
+            manager_->config().maxReplayEvents)
+        {
+          const auto snapshot =
+              manager_->snapshot_store()->load_latest(
+                  roomId);
+
+          if (snapshot &&
+              !snapshot->last_event_id().empty() &&
+              (replayCursor.empty() ||
+               snapshot->last_event_id() > replayCursor))
+          {
+            connection->send(
+                protocol::from_snapshot(
+                    *snapshot));
+
+            replayCursor =
+                snapshot->last_event_id();
+
+            session.acknowledge(
+                roomId,
+                replayCursor);
+
+            events =
+                manager_->event_store()->load_after(
+                    roomId,
+                    replayCursor,
+                    manager_->config().maxReplayEvents);
+          }
+          else
+          {
+            events.resize(
+                manager_->config().maxReplayEvents);
+          }
+        }
+
+        for (const RoomEvent &event : events)
+        {
+          connection->send(
+              protocol::from_event(event));
+
+          if (!event.event_id().empty())
+          {
+            session.acknowledge(
+                roomId,
+                event.event_id());
+          }
+        }
+      }
+    }
+    catch (...)
+    {
+      try
+      {
+        static_cast<void>(
+            session.detach(
+                now));
+      }
+      catch (...)
+      {
+      }
+
+      try
+      {
+        connection->close(
+            ErrorCode::InvalidResumeToken,
+            "session resume failed");
+      }
+      catch (...)
+      {
+      }
+
+      throw;
+    }
+
+    return SessionResumeResult{
+        std::shared_ptr<Session>(
+            &session,
+            [](Session *) {}),
+        std::move(replacedConnection),
+        std::move(nextToken),
+        rotateToken};
+  }
+
   std::chrono::milliseconds
   SessionResume::resume_window() const noexcept
   {
+    if (hasCustomResumeWindow_)
+    {
+      return customResumeWindow_;
+    }
+
     return std::chrono::duration_cast<
         std::chrono::milliseconds>(
         manager_->config().sessionResumeWindow);

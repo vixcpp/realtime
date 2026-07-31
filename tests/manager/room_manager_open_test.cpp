@@ -31,13 +31,13 @@
 #include <vix/realtime/memory_snapshot_store.hpp>
 #include <vix/realtime/node_id.hpp>
 #include <vix/realtime/room.hpp>
-#include <vutility>
+#include <utility>
 #include <vector>
 
 #include <vix/realtime/command_result.hpp>
 #include <vix/realtime/config.hpp>
 #include <vix/realtime/errors.hpp>
-#include <vix/realtime/mix/realtime/room_command.hpp>
+#include <vix/realtime/room_command.hpp>
 #include <vix/realtime/room_context.hpp>
 #include <vix/realtime/room_event.hpp>
 #include <vix/realtime/room_handler.hpp>

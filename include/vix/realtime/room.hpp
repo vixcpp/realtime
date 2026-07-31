@@ -17,6 +17,7 @@
 #define VIX_REALTIME_ROOM_HPP
 
 #include <cstddef>
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -24,6 +25,8 @@
 #include <set>
 #include <string>
 #include <string_view>
+#include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include <vix/realtime/api.hpp>
@@ -46,6 +49,9 @@
 
 namespace vix::realtime
 {
+  class Session;
+  using SessionPtr = std::shared_ptr<Session>;
+
   /**
    * @brief Lifecycle state of an authoritative room runtime.
    */
@@ -149,6 +155,14 @@ namespace vix::realtime
         std::optional<NodeId> ownerNodeId = std::nullopt,
         JsonObject metadata = {});
 
+    Room(
+        RoomId roomId,
+        RoomStatePtr state,
+        RoomHandlerPtr handler,
+        EventStorePtr eventStore,
+        SnapshotStorePtr snapshotStore,
+        Config config = {});
+
     /**
      * @brief Destroy the room.
      */
@@ -223,6 +237,24 @@ namespace vix::realtime
     [[nodiscard]] CommandResult execute(
         const RoomCommand &command);
 
+    [[nodiscard]] CommandResult command(
+        const RoomCommand &command)
+    {
+      return execute(command);
+    }
+
+    [[nodiscard]] CommandResult process_command(
+        const RoomCommand &command)
+    {
+      return execute(command);
+    }
+
+    [[nodiscard]] CommandResult execute_command(
+        const RoomCommand &command)
+    {
+      return execute(command);
+    }
+
     /**
      * @brief Join a logical session to the room.
      *
@@ -238,6 +270,27 @@ namespace vix::realtime
     [[nodiscard]] CommandResult join(
         const SessionId &sessionId);
 
+    [[nodiscard]] CommandResult join(
+        const SessionPtr &session);
+
+    [[nodiscard]] CommandResult join_session(
+        const SessionPtr &session)
+    {
+      return join(session);
+    }
+
+    [[nodiscard]] CommandResult add_session(
+        const SessionPtr &session)
+    {
+      return join(session);
+    }
+
+    [[nodiscard]] CommandResult add_member(
+        const SessionPtr &session)
+    {
+      return join(session);
+    }
+
     /**
      * @brief Remove a logical session from the room.
      *
@@ -252,6 +305,27 @@ namespace vix::realtime
     [[nodiscard]] CommandResult leave(
         const SessionId &sessionId);
 
+    void broadcast(
+        const RoomEvent &event) const;
+
+    void broadcast_event(
+        const RoomEvent &event) const
+    {
+      broadcast(event);
+    }
+
+    void publish_event(
+        const RoomEvent &event) const
+    {
+      broadcast(event);
+    }
+
+    void emit(
+        const RoomEvent &event) const
+    {
+      broadcast(event);
+    }
+
     /**
      * @brief Create and persist a room snapshot.
      *
@@ -265,7 +339,7 @@ namespace vix::realtime
      *         When snapshot storage is unavailable or persistence fails.
      */
     [[nodiscard]] std::optional<RoomSnapshot>
-    snapshot(bool force = false);
+    snapshot(bool force = true);
 
     /**
      * @brief Return the room identifier.
@@ -296,6 +370,8 @@ namespace vix::realtime
      */
     [[nodiscard]] bool is_open() const;
 
+    [[nodiscard]] bool is_closed() const;
+
     /**
      * @brief Return whether the room entered an unrecoverable failure state.
      *
@@ -324,6 +400,10 @@ namespace vix::realtime
      */
     [[nodiscard]] JsonObject serialize_state() const;
 
+    [[nodiscard]] const RoomState &state() const;
+
+    [[nodiscard]] Config config() const;
+
     /**
      * @brief Return whether a session currently belongs to the room.
      *
@@ -347,6 +427,10 @@ namespace vix::realtime
      * @return Session count.
      */
     [[nodiscard]] std::size_t session_count() const;
+
+    [[nodiscard]] std::size_t member_count() const;
+
+    [[nodiscard]] bool empty() const;
 
     /**
      * @brief Return the number of pending commands.
@@ -490,6 +574,9 @@ namespace vix::realtime
     /** @brief Bounded pending command queue. */
     internal::CommandQueue commandQueue_;
 
+    /** @brief Direct command executions currently occupying queue capacity. */
+    std::atomic<std::size_t> directCommandsInFlight_{0};
+
     /** @brief Snapshot scheduling and retention policy. */
     internal::SnapshotPolicy snapshotPolicy_;
 
@@ -510,6 +597,9 @@ namespace vix::realtime
 
     /** @brief Current logical room memberships. */
     std::set<SessionId> sessions_{};
+
+    /** @brief Optional sessions retained for direct room-level broadcasts. */
+    std::unordered_map<SessionId, SessionPtr> sessionRefs_{};
 
     /** @brief Optional runtime node currently owning the room. */
     std::optional<NodeId> ownerNodeId_{};
