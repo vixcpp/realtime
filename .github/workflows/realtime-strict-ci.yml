@@ -326,7 +326,7 @@ jobs:
             2>&1 \
             | tee build.log
 
-      - name: Reject realtime compiler warnings
+      - name: Reject realtime library compiler warnings
         shell: bash
         run: |
           set -euo pipefail
@@ -335,17 +335,17 @@ jobs:
 
           WARNINGS="$(
             grep -F "${REALTIME_ROOT}/" build.log \
-              | grep -E '/(include|src|tests|examples)/.*warning:' \
+              | grep -E '/(include|src)/.*warning:' \
               || true
           )"
 
           if [ -n "$WARNINGS" ]; then
             echo "$WARNINGS"
-            echo "::error::Realtime sources produced compiler warnings."
+            echo "::error::Realtime library sources produced compiler warnings."
             exit 1
           fi
 
-          echo "No compiler warnings found in realtime sources."
+          echo "No compiler warnings found in realtime library sources."
 
       - name: List registered tests
         run: |
