@@ -79,6 +79,8 @@ env:
     libssl-dev
     sqlite3
     libsqlite3-dev
+    libgtest-dev
+    libgmock-dev
 
 jobs:
   build-and-test:
@@ -138,6 +140,8 @@ jobs:
           sudo apt-get install -y --no-install-recommends $DEPS
 
           test -f /usr/include/asio.hpp
+          test -f /usr/include/gtest/gtest.h
+          test -f /usr/include/gmock/gmock.h
 
       - name: Select compiler
         run: |
@@ -470,6 +474,8 @@ jobs:
           sudo apt-get install -y --no-install-recommends $DEPS
 
           test -f /usr/include/asio.hpp
+          test -f /usr/include/gtest/gtest.h
+          test -f /usr/include/gmock/gmock.h
 
       - name: Fetch sibling dependencies
         shell: bash
@@ -705,6 +711,8 @@ jobs:
           sudo apt-get install -y --no-install-recommends $DEPS
 
           test -f /usr/include/asio.hpp
+          test -f /usr/include/gtest/gtest.h
+          test -f /usr/include/gmock/gmock.h
 
       - name: Fetch sibling dependencies
         shell: bash
