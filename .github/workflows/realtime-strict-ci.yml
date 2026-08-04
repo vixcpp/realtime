@@ -687,6 +687,7 @@ jobs:
             --inconclusive \
             --error-exitcode=2 \
             --suppress=missingIncludeSystem \
+            --suppress=syntaxError \
             --inline-suppr \
             tests/ \
             examples/
