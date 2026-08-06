@@ -23,7 +23,17 @@ if(NOT TARGET vix::realtime)
 endif()
 
 find_package(Threads REQUIRED)
-find_package(GTest REQUIRED)
+
+if(NOT TARGET GTest::gtest_main)
+  find_package(GTest REQUIRED)
+endif()
+
+if(NOT TARGET GTest::gtest_main)
+  message(
+    FATAL_ERROR
+    "[realtime/tests] GTest::gtest_main is not available"
+  )
+endif()
 
 set(
   VIX_REALTIME_TEST_TIMEOUT
