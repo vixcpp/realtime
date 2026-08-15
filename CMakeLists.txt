@@ -520,6 +520,7 @@ if(VIX_REALTIME_ENABLE_INSTALL)
         PATTERN "*.hpp"
         PATTERN "*.h"
         PATTERN "*.inc"
+        PATTERN "internal" EXCLUDE
     )
   endif()
 endif()

@@ -61,7 +61,9 @@
 #include <vix/realtime/server.hpp>
 
 #include <vix/realtime/transport.hpp>
+#if VIX_REALTIME_WITH_WEBSOCKET
 #include <vix/realtime/websocket_adapter.hpp>
+#endif
 
 #include <vix/realtime/session_resume.hpp>
 
