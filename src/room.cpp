@@ -118,13 +118,6 @@ namespace vix::realtime
           "room requires an event store"};
     }
 
-    if (!snapshotStore_)
-    {
-      throw Error{
-          ErrorCode::MissingDependency,
-          "room requires a snapshot store"};
-    }
-
     if (state_->schema_version() == 0)
     {
       throw Error{

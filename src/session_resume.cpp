@@ -16,6 +16,8 @@
 #include <vix/realtime/session_resume.hpp>
 
 #include <cstddef>
+#include <chrono>
+#include <limits>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -410,64 +412,12 @@ namespace vix::realtime
           "logical session resume window has expired"};
     }
 
-    ResumeToken nextToken =
-        session->resume_token();
-
-    if (rotateToken)
-    {
-      nextToken =
-          tokenGenerator_->generate();
-    }
-
-    const ConnectionId connectionId =
-        connection->id();
-
-    ConnectionPtr replacedConnection =
-        manager_->attach_connection(
-            sessionId,
-            connection,
-            now);
-
-    try
-    {
-      if (rotateToken)
-      {
-        session->set_resume_token(
-            nextToken);
-      }
-    }
-    catch (...)
-    {
-      try
-      {
-        static_cast<void>(
-            manager_->detach_connection(
-                sessionId,
-                connectionId,
-                now));
-      }
-      catch (...)
-      {
-      }
-
-      try
-      {
-        connection->close(
-            ErrorCode::InvalidResumeToken,
-            "session resume token rotation failed");
-      }
-      catch (...)
-      {
-      }
-
-      throw;
-    }
-
-    return SessionResumeResult{
+    return resume_session_locked(
         session,
-        std::move(replacedConnection),
-        std::move(nextToken),
-        rotateToken};
+        std::move(connection),
+        token,
+        now,
+        rotateToken);
   }
 
   SessionResumeResult SessionResume::resume(
@@ -500,198 +450,121 @@ namespace vix::realtime
       bool rotateToken)
   {
     require_enabled();
-
     if (session.id().empty())
     {
-      throw Error{
-          ErrorCode::InvalidResumeToken,
-          "session resume requires a session identifier"};
-    }
-
-    if (!connection)
-    {
-      throw Error{
-          ErrorCode::ConnectionNotAttached,
-          "session resume requires a connection"};
-    }
-
-    if (connection->id().empty())
-    {
-      throw Error{
-          ErrorCode::ConnectionNotAttached,
-          "session resume connection requires an identifier"};
-    }
-
-    if (!connection->is_open())
-    {
-      throw Error{
-          ErrorCode::ConnectionNotAttached,
-          "session resume requires an open connection"};
+      throw Error{ErrorCode::InvalidResumeToken,
+                  "session resume requires a session identifier"};
     }
 
     std::lock_guard<std::mutex> lock{mutex_};
+    return resume_session_locked(
+        SessionPtr{&session, [](Session *) {}},
+        std::move(connection), token, now, rotateToken);
+  }
 
-    validate_token_locked(
-        std::shared_ptr<Session>(
-            &session,
-            [](Session *) {}),
-        token);
-
-    if (session.closed())
+  SessionResumeResult SessionResume::resume_session_locked(
+      const SessionPtr &session, ConnectionPtr connection, std::string_view token,
+      Timestamp now, bool rotateToken)
+  {
+    if (!connection || connection->id().empty() || !connection->is_open())
     {
-      throw Error{
-          ErrorCode::SessionExpired,
-          "logical session is permanently closed"};
+      throw Error{ErrorCode::ConnectionNotAttached,
+                  "session resume requires an open identified connection"};
+    }
+    validate_token_locked(session, token);
+    if (session->closed() || session->connected() || !session->detached_at() ||
+        !session->can_resume(now, resume_window()))
+    {
+      throw Error{ErrorCode::SessionExpired,
+                  "logical session is not eligible for resumption"};
+    }
+    if (now < *session->detached_at())
+    {
+      throw Error{ErrorCode::CorruptedState,
+                  "session resume timestamp precedes detachment"};
+    }
+    if (session->room_count() > manager_->config().maxResumeRooms)
+    {
+      throw Error{ErrorCode::ReplayLimitExceeded,
+                  "session resume exceeds the configured room limit"};
     }
 
-    if (session.connected())
-    {
-      throw Error{
-          ErrorCode::InvalidResumeToken,
-          "logical session already has an active connection"};
-    }
-
-    const std::optional<Timestamp> detachedAt =
-        session.detached_at();
-
-    if (!detachedAt)
-    {
-      throw Error{
-          ErrorCode::InvalidResumeToken,
-          "logical session has not been detached"};
-    }
-
-    if (now < *detachedAt)
-    {
-      throw Error{
-          ErrorCode::CorruptedState,
-          "session resume timestamp precedes detachment"};
-    }
-
-    if (!session.can_resume(
-            now,
-            resume_window()))
-    {
-      throw Error{
-          ErrorCode::SessionExpired,
-          "logical session resume window has expired"};
-    }
-
-    ResumeToken nextToken =
-        session.resume_token();
-
-    if (rotateToken)
-    {
-      nextToken =
-          tokenGenerator_->generate();
-    }
-
-    ConnectionPtr replacedConnection =
-        session.attach(
-            connection,
-            now);
-
+    const ResumeToken previousToken = session->resume_token();
+    ResumeToken nextToken = rotateToken ? tokenGenerator_->generate() : previousToken;
+    const ConnectionId connectionId = connection->id();
+    ConnectionPtr replaced = manager_->attach_connection(session, connection, now);
     try
     {
       if (rotateToken)
       {
-        session.set_resume_token(
-            nextToken);
+        session->set_resume_token(nextToken);
       }
-
-      for (const RoomId &roomId : session.rooms())
-      {
-        EventId replayCursor =
-            session.last_event_id(roomId);
-
-        std::vector<RoomEvent> events =
-            manager_->event_store()->load_after(
-                roomId,
-                replayCursor,
-                manager_->config().maxReplayEvents + 1);
-
-        if (events.size() >
-            manager_->config().maxReplayEvents)
-        {
-          const auto snapshot =
-              manager_->snapshot_store()->load_latest(
-                  roomId);
-
-          if (snapshot &&
-              !snapshot->last_event_id().empty() &&
-              (replayCursor.empty() ||
-               snapshot->last_event_id() > replayCursor))
-          {
-            connection->send(
-                protocol::from_snapshot(
-                    *snapshot));
-
-            replayCursor =
-                snapshot->last_event_id();
-
-            session.acknowledge(
-                roomId,
-                replayCursor);
-
-            events =
-                manager_->event_store()->load_after(
-                    roomId,
-                    replayCursor,
-                    manager_->config().maxReplayEvents);
-          }
-          else
-          {
-            events.resize(
-                manager_->config().maxReplayEvents);
-          }
-        }
-
-        for (const RoomEvent &event : events)
-        {
-          connection->send(
-              protocol::from_event(event));
-
-          if (!event.event_id().empty())
-          {
-            session.acknowledge(
-                roomId,
-                event.event_id());
-          }
-        }
-      }
+      replay_rooms_locked(*session, connection);
     }
     catch (...)
     {
-      try
-      {
-        static_cast<void>(
-            session.detach(
-                now));
-      }
-      catch (...)
-      {
-      }
-
-      try
-      {
-        connection->close(
-            ErrorCode::InvalidResumeToken,
-            "session resume failed");
-      }
-      catch (...)
-      {
-      }
-
+      try { session->set_resume_token(previousToken); } catch (...) {}
+      try { static_cast<void>(manager_->detach_connection(session, connectionId, now)); } catch (...) {}
+      try { connection->close(ErrorCode::ReplayLimitExceeded, "session resume recovery failed"); } catch (...) {}
       throw;
     }
+    return SessionResumeResult{session, std::move(replaced), std::move(nextToken), rotateToken};
+  }
 
-    return SessionResumeResult{
-        std::shared_ptr<Session>(
-            &session,
-            [](Session *) {}),
-        std::move(replacedConnection),
-        std::move(nextToken),
-        rotateToken};
+  void SessionResume::replay_rooms_locked(
+      Session &session, const ConnectionPtr &connection) const
+  {
+    const Config &config = manager_->config();
+    const auto started = SteadyClock::now();
+    const auto queryLimit = config.maxReplayEvents == std::numeric_limits<std::size_t>::max()
+        ? config.maxReplayEvents : config.maxReplayEvents + 1;
+
+    for (const RoomId &roomId : session.rooms())
+    {
+      EventId cursor = session.last_event_id(roomId);
+      std::vector<RoomEvent> events = manager_->event_store()->load_after(roomId, cursor, queryLimit);
+      if (events.size() > config.maxReplayEvents)
+      {
+        const auto snapshot = manager_->snapshot_store()
+            ? manager_->snapshot_store()->load_latest(roomId) : std::nullopt;
+        if (!snapshot || snapshot->last_event_id().empty() ||
+            (!cursor.empty() && snapshot->last_event_id() <= cursor))
+        {
+          throw Error{ErrorCode::ReplayLimitExceeded,
+                      "session replay exceeds its event limit without a usable snapshot"};
+        }
+        connection->send(protocol::from_snapshot(*snapshot));
+        cursor = snapshot->last_event_id();
+        events = manager_->event_store()->load_after(roomId, cursor, queryLimit);
+        if (events.size() > config.maxReplayEvents)
+        {
+          throw Error{ErrorCode::ReplayLimitExceeded,
+                      "session replay remains above its event limit after snapshot recovery"};
+        }
+      }
+
+      std::size_t replayBytes = 0;
+      for (const RoomEvent &event : events)
+      {
+        const protocol::Envelope envelope = protocol::from_event(event);
+        replayBytes += protocol::serialize(envelope).size();
+        if (replayBytes > config.maxReplayBytes ||
+            SteadyClock::now() - started > config.replayTimeout)
+        {
+          throw Error{ErrorCode::ReplayLimitExceeded,
+                      "session replay exceeds its configured recovery limit"};
+        }
+        connection->send(envelope);
+        if (!event.event_id().empty())
+        {
+          cursor = event.event_id();
+        }
+      }
+      if (cursor != session.last_event_id(roomId))
+      {
+        session.acknowledge(roomId, cursor);
+      }
+    }
   }
 
   std::chrono::milliseconds

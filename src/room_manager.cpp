@@ -862,8 +862,22 @@ namespace vix::realtime
       ConnectionPtr connection,
       Timestamp now)
   {
-    SessionPtr session =
-        require_session(sessionId);
+    return attach_connection(
+        require_session(sessionId),
+        std::move(connection),
+        now);
+  }
+
+  ConnectionPtr RoomManager::attach_connection(
+      const SessionPtr &session,
+      ConnectionPtr connection,
+      Timestamp now)
+  {
+    if (!session)
+    {
+      throw Error{ErrorCode::SessionNotFound,
+                  "connection attachment requires a session"};
+    }
 
     ConnectionPtr previous =
         session->attach(
@@ -879,8 +893,22 @@ namespace vix::realtime
       const ConnectionId &connectionId,
       Timestamp now)
   {
-    SessionPtr session =
-        require_session(sessionId);
+    return detach_connection(
+        require_session(sessionId),
+        connectionId,
+        now);
+  }
+
+  ConnectionPtr RoomManager::detach_connection(
+      const SessionPtr &session,
+      const ConnectionId &connectionId,
+      Timestamp now)
+  {
+    if (!session)
+    {
+      throw Error{ErrorCode::SessionNotFound,
+                  "connection detachment requires a session"};
+    }
 
     ConnectionPtr detached =
         session->detach(

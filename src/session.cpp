@@ -1,8 +1,8 @@
 /**
  *
- * @file server.cpp
+ * @file session.cpp
  * @author Gaspard Kirira
- * @brief Implementation of the transport-independent Vix Realtime server.
+ * @brief Implementation of Vix Realtime logical client sessions.
  *
  * Copyright 2026, Gaspard Kirira. All rights reserved.
  * https://github.com/vixcpp/vix
@@ -13,355 +13,231 @@
  *
  */
 
-#include <vix/realtime/server.hpp>
+#include <vix/realtime/session.hpp>
 
-#include <chrono>
-#include <string>
 #include <utility>
-#include <vector>
 
 #include <vix/realtime/errors.hpp>
 
 namespace vix::realtime
 {
-  Server::Server(
-      NodeId nodeId,
-      Config config)
-      : manager_(
-            std::make_shared<RoomManager>(
-                std::move(nodeId),
-                std::move(config))),
-        status_(ServerStatus::Created)
-  {
-  }
-
-  Server::Server(RoomManagerPtr manager)
-      : manager_(std::move(manager)),
-        status_(ServerStatus::Created)
-  {
-    if (!manager_)
-    {
-      throw Error{
-          ErrorCode::MissingDependency,
-          "realtime server requires a room manager"};
-    }
-  }
-
-  Server::~Server()
-  {
-    try
-    {
-      static_cast<void>(stop());
-    }
-    catch (...)
-    {
-    }
-  }
-
-  bool Server::start()
-  {
-    std::lock_guard<std::mutex> lock{mutex_};
-
-    if (status_ == ServerStatus::Running)
-    {
-      return false;
-    }
-
-    if (status_ == ServerStatus::Stopping)
-    {
-      throw Error{
-          ErrorCode::RoomNotReady,
-          "realtime server is currently stopping"};
-    }
-
-    if (status_ == ServerStatus::Failed)
-    {
-      throw Error{
-          ErrorCode::InternalError,
-          "failed realtime server cannot be restarted"};
-    }
-
-    status_ = ServerStatus::Running;
-    return true;
-  }
-
-  bool Server::stop()
-  {
-    {
-      std::lock_guard<std::mutex> lock{mutex_};
-
-      if (status_ == ServerStatus::Stopped)
-      {
-        return false;
-      }
-
-      if (status_ == ServerStatus::Created)
-      {
-        status_ = ServerStatus::Stopped;
-        return false;
-      }
-
-      if (status_ == ServerStatus::Stopping)
-      {
-        return false;
-      }
-
-      status_ = ServerStatus::Stopping;
-    }
-
-    std::size_t failures = 0;
-
-    const std::vector<SessionId> sessionIds =
-        manager_->session_ids();
-
-    for (const auto &sessionId : sessionIds)
-    {
-      try
-      {
-        static_cast<void>(
-            manager_->close_session(
-                sessionId,
-                ErrorCode::Cancelled,
-                "realtime server shutdown",
-                SystemClock::now()));
-      }
-      catch (...)
-      {
-        ++failures;
-      }
-    }
-
-    const std::vector<RoomId> roomIds =
-        manager_->room_ids();
-
-    for (const auto &roomId : roomIds)
-    {
-      try
-      {
-        CommandResult result =
-            manager_->close_room(
-                roomId,
-                true);
-
-        if (result.is_rejected())
-        {
-          ++failures;
-        }
-      }
-      catch (...)
-      {
-        ++failures;
-      }
-    }
-
-    {
-      std::lock_guard<std::mutex> lock{mutex_};
-
-      status_ =
-          failures == 0
-              ? ServerStatus::Stopped
-              : ServerStatus::Failed;
-    }
-
-    if (failures != 0)
-    {
-      throw Error{
-          ErrorCode::InternalError,
-          "realtime server shutdown completed with cleanup failures"};
-    }
-
-    return true;
-  }
-
-  ServerStatus Server::status() const
-  {
-    std::lock_guard<std::mutex> lock{mutex_};
-
-    return status_;
-  }
-
-  bool Server::running() const
-  {
-    std::lock_guard<std::mutex> lock{mutex_};
-
-    return status_ == ServerStatus::Running;
-  }
-
-  bool Server::stopped() const
-  {
-    std::lock_guard<std::mutex> lock{mutex_};
-
-    return status_ == ServerStatus::Stopped;
-  }
-
-  bool Server::register_factory(
-      RoomFactoryPtr factory,
-      bool replace)
-  {
-    require_registry_available();
-
-    return manager_->register_factory(
-        std::move(factory),
-        replace);
-  }
-
-  bool Server::unregister_factory(
-      std::string_view roomType)
-  {
-    require_registry_available();
-
-    return manager_->unregister_factory(
-        roomType);
-  }
-
-  RoomPtr Server::open_room(
-      RoomId roomId,
-      std::string_view roomType,
+  Session::Session(
+      SessionId sessionId,
+      Identity identity,
+      ResumeToken resumeToken,
+      Timestamp createdAt,
       JsonObject metadata)
+      : sessionId_(std::move(sessionId)),
+        identity_(std::move(identity)),
+        createdAt_(createdAt),
+        connection_(),
+        resumeToken_(std::move(resumeToken)),
+        lastSeenAt_(createdAt),
+        detachedAt_(),
+        closedAt_(),
+        rooms_(),
+        metadata_(std::move(metadata))
   {
-    require_running();
-
-    return manager_->open_room(
-        std::move(roomId),
-        roomType,
-        std::move(metadata));
+    validate();
   }
 
-  CommandResult Server::close_room(
-      const RoomId &roomId,
-      bool remove)
+  const SessionId &Session::id() const noexcept
   {
-    require_running();
-
-    return manager_->close_room(
-        roomId,
-        remove);
+    return sessionId_;
   }
 
-  RoomPtr Server::find_room(
-      const RoomId &roomId) const
+  const Identity &Session::identity() const noexcept
   {
-    return manager_->find_room(roomId);
+    return identity_;
   }
 
-  SessionPtr Server::create_session(
-      SessionId sessionId,
-      Identity identity,
-      ResumeToken resumeToken,
-      JsonObject metadata,
-      Timestamp now)
+  Timestamp Session::created_at() const noexcept
   {
-    require_running();
-
-    return manager_->create_session(
-        std::move(sessionId),
-        std::move(identity),
-        std::move(resumeToken),
-        std::move(metadata),
-        now);
+    return createdAt_;
   }
 
-  SessionPtr Server::connect(
-      SessionId sessionId,
-      ConnectionPtr connection,
-      Identity identity,
-      ResumeToken resumeToken,
-      JsonObject metadata,
-      Timestamp now)
+  SessionStatus Session::status() const
   {
-    require_running();
+    std::lock_guard<std::mutex> lock{mutex_};
 
-    if (sessionId.empty())
+    if (closedAt_)
     {
-      throw Error{
-          ErrorCode::SessionNotFound,
-          "connection attachment requires a session identifier"};
+      return SessionStatus::Closed;
     }
 
+    if (connection_ && connection_->is_open())
+    {
+      return SessionStatus::Connected;
+    }
+
+    return SessionStatus::Detached;
+  }
+
+  bool Session::connected() const
+  {
+    std::lock_guard<std::mutex> lock{mutex_};
+
+    return !closedAt_.has_value() &&
+           connection_ != nullptr &&
+           connection_->is_open();
+  }
+
+  bool Session::closed() const
+  {
+    std::lock_guard<std::mutex> lock{mutex_};
+
+    return closedAt_.has_value();
+  }
+
+  ConnectionPtr Session::connection() const
+  {
+    std::lock_guard<std::mutex> lock{mutex_};
+
+    return connection_;
+  }
+
+  ConnectionId Session::connection_id() const
+  {
+    std::lock_guard<std::mutex> lock{mutex_};
+
+    if (!connection_)
+    {
+      return {};
+    }
+
+    return connection_->id();
+  }
+
+  ConnectionPtr Session::attach(
+      ConnectionPtr connection,
+      Timestamp now)
+  {
     if (!connection)
     {
       throw Error{
           ErrorCode::ConnectionNotAttached,
-          "connection attachment requires a connection"};
+          "session cannot attach a null connection"};
     }
 
-    SessionPtr session =
-        manager_->find_session(sessionId);
-
-    bool created = false;
-
-    if (!session)
+    if (connection->id().empty())
     {
-      try
-      {
-        session =
-            manager_->create_session(
-                sessionId,
-                std::move(identity),
-                std::move(resumeToken),
-                std::move(metadata),
-                now);
+      throw Error{
+          ErrorCode::ConnectionNotAttached,
+          "session cannot attach a connection without an identifier"};
+    }
 
-        created = true;
-      }
-      catch (...)
-      {
-        session =
-            manager_->find_session(sessionId);
+    if (!connection->is_open())
+    {
+      throw Error{
+          ErrorCode::ConnectionNotAttached,
+          "session cannot attach a closed connection"};
+    }
 
-        if (!session)
-        {
-          throw;
-        }
-      }
+    std::lock_guard<std::mutex> lock{mutex_};
+
+    if (closedAt_)
+    {
+      throw Error{
+          ErrorCode::SessionExpired,
+          "closed session cannot attach a connection"};
+    }
+
+    ConnectionPtr previous =
+        std::move(connection_);
+
+    if (!previous)
+    {
+      previous =
+          std::move(detachedConnection_);
     }
     else
     {
-      if (!identity.empty() &&
-          session->identity() != identity)
-      {
-        throw Error{
-            ErrorCode::Unauthorized,
-            "connection identity does not match the logical session"};
-      }
-
-      if (!resumeToken.empty())
-      {
-        session->set_resume_token(
-            std::move(resumeToken));
-      }
+      detachedConnection_.reset();
     }
 
-    ConnectionPtr previous;
+    connection_ = std::move(connection);
+    detachedAt_.reset();
+    lastSeenAt_ = now;
 
-    try
+    return previous;
+  }
+
+  ConnectionPtr Session::detach(
+      const ConnectionId &connectionId,
+      Timestamp now)
+  {
+    if (connectionId.empty())
     {
-      previous =
-          manager_->attach_connection(
-              sessionId,
-              std::move(connection),
-              now);
+      throw Error{
+          ErrorCode::ConnectionNotAttached,
+          "connection detachment requires an identifier"};
     }
-    catch (...)
+
+    std::lock_guard<std::mutex> lock{mutex_};
+
+    if (!connection_ ||
+        connection_->id() != connectionId)
     {
-      if (created)
+      return {};
+    }
+
+    ConnectionPtr detached =
+        std::move(connection_);
+
+    connection_.reset();
+    detachedConnection_ = detached;
+    detachedAt_ = now;
+    lastSeenAt_ = now;
+
+    return detached;
+  }
+
+  ConnectionPtr Session::detach(Timestamp now)
+  {
+    std::lock_guard<std::mutex> lock{mutex_};
+
+    if (!connection_)
+    {
+      if (!closedAt_)
       {
-        try
-        {
-          static_cast<void>(
-              manager_->close_session(
-                  sessionId,
-                  ErrorCode::ConnectionNotAttached,
-                  "connection attachment failed",
-                  now));
-        }
-        catch (...)
-        {
-        }
+        detachedAt_ = now;
+        lastSeenAt_ = now;
       }
 
-      throw;
+      return {};
     }
+
+    ConnectionPtr detached =
+        std::move(connection_);
+
+    connection_.reset();
+    detachedConnection_ = detached;
+    detachedAt_ = now;
+    lastSeenAt_ = now;
+
+    return detached;
+  }
+
+  ConnectionPtr Session::close(Timestamp now)
+  {
+    std::lock_guard<std::mutex> lock{mutex_};
+
+    if (closedAt_)
+    {
+      return {};
+    }
+
+    ConnectionPtr previous =
+        std::move(connection_);
+
+    connection_.reset();
+    detachedConnection_.reset();
+    detachedAt_ = now;
+    closedAt_ = now;
+    lastSeenAt_ = now;
+    resumeToken_.clear();
+    rooms_.clear();
+    roomCursors_.clear();
 
     if (previous)
     {
@@ -369,256 +245,386 @@ namespace vix::realtime
       {
         previous->close(
             ErrorCode::Cancelled,
-            "connection replaced by a newer attachment");
+            "session closed");
       }
       catch (...)
       {
       }
     }
 
-    return session;
+    return previous;
   }
 
-  ConnectionPtr Server::disconnect(
-      const SessionId &sessionId,
-      const ConnectionId &connectionId,
-      Timestamp now)
-  {
-    require_running();
-
-    return manager_->detach_connection(
-        sessionId,
-        connectionId,
-        now);
-  }
-
-  bool Server::close_session(
-      const SessionId &sessionId,
-      ErrorCode code,
-      std::string_view reason,
-      Timestamp now)
-  {
-    require_running();
-
-    return manager_->close_session(
-        sessionId,
-        code,
-        reason,
-        now);
-  }
-
-  SessionPtr Server::find_session(
-      const SessionId &sessionId) const
-  {
-    return manager_->find_session(
-        sessionId);
-  }
-
-  CommandResult Server::join_room(
-      const SessionId &sessionId,
-      const RoomId &roomId,
-      Timestamp now)
-  {
-    require_running();
-
-    return manager_->join_room(
-        sessionId,
-        roomId,
-        now);
-  }
-
-  CommandResult Server::leave_room(
-      const SessionId &sessionId,
-      const RoomId &roomId,
-      Timestamp now)
-  {
-    require_running();
-
-    return manager_->leave_room(
-        sessionId,
-        roomId,
-        now);
-  }
-
-  CommandResult Server::execute(
-      const RoomCommand &command)
-  {
-    require_running();
-
-    SessionPtr session =
-        manager_->require_session(
-            command.session_id());
-
-    session->touch(
-        SystemClock::now());
-
-    return manager_->execute(command);
-  }
-
-  internal::CommandQueueStatus
-  Server::enqueue(RoomCommand command)
-  {
-    require_running();
-
-    SessionPtr session =
-        manager_->require_session(
-            command.session_id());
-
-    session->touch(
-        SystemClock::now());
-
-    return manager_->enqueue(
-        std::move(command));
-  }
-
-  std::optional<CommandResult>
-  Server::process_next(
-      const RoomId &roomId)
-  {
-    require_running();
-
-    return manager_->process_next(
-        roomId);
-  }
-
-  void Server::send(
-      const SessionId &sessionId,
+  void Session::send(
       const protocol::Envelope &envelope) const
   {
-    require_running();
+    ConnectionPtr activeConnection;
 
-    manager_->require_session(
-                sessionId)
-        ->send(envelope);
-  }
-
-  std::size_t Server::prune_expired_sessions(
-      Timestamp now)
-  {
-    require_running();
-
-    const Config &runtimeConfig =
-        manager_->config();
-
-    const auto resumeWindow =
-        std::chrono::duration_cast<std::chrono::milliseconds>(
-            runtimeConfig.sessionResumeWindow);
-
-    const std::vector<SessionId> sessionIds =
-        manager_->session_ids();
-
-    std::size_t removed = 0;
-
-    for (const auto &sessionId : sessionIds)
     {
-      SessionPtr session =
-          manager_->find_session(sessionId);
+      std::lock_guard<std::mutex> lock{mutex_};
 
-      if (!session)
+      if (closedAt_)
       {
-        continue;
-      }
-
-      if (session->connected())
-      {
-        continue;
+        throw Error{
+            ErrorCode::SessionExpired,
+            "closed session cannot send protocol messages"};
       }
 
-      if (runtimeConfig.enableSessionResume &&
-          session->can_resume(
-              now,
-              resumeWindow))
+      if (!connection_)
       {
-        continue;
+        throw Error{
+            ErrorCode::ConnectionNotAttached,
+            "session has no active connection"};
       }
 
-      try
-      {
-        if (manager_->close_session(
-                sessionId,
-                ErrorCode::SessionExpired,
-                "session resume window expired",
-                now))
-        {
-          ++removed;
-        }
-      }
-      catch (...)
-      {
-      }
+      activeConnection = connection_;
     }
 
+    if (!activeConnection->is_open())
+    {
+      throw Error{
+          ErrorCode::ConnectionNotAttached,
+          "session connection is no longer open"};
+    }
+
+    activeConnection->send(envelope);
+  }
+
+  void Session::touch(Timestamp now)
+  {
+    std::lock_guard<std::mutex> lock{mutex_};
+
+    if (!closedAt_)
+    {
+      lastSeenAt_ = now;
+    }
+  }
+
+  Timestamp Session::last_seen_at() const
+  {
+    std::lock_guard<std::mutex> lock{mutex_};
+
+    return lastSeenAt_;
+  }
+
+  std::optional<Timestamp>
+  Session::detached_at() const
+  {
+    std::lock_guard<std::mutex> lock{mutex_};
+
+    return detachedAt_;
+  }
+
+  std::optional<Timestamp>
+  Session::closed_at() const
+  {
+    std::lock_guard<std::mutex> lock{mutex_};
+
+    return closedAt_;
+  }
+
+  ResumeToken Session::resume_token() const
+  {
+    std::lock_guard<std::mutex> lock{mutex_};
+
+    return resumeToken_;
+  }
+
+  void Session::set_resume_token(
+      ResumeToken value)
+  {
+    std::lock_guard<std::mutex> lock{mutex_};
+
+    if (closedAt_)
+    {
+      throw Error{
+          ErrorCode::SessionExpired,
+          "closed session cannot receive a resume token"};
+    }
+
+    resumeToken_ = std::move(value);
+  }
+
+  void Session::clear_resume_token()
+  {
+    std::lock_guard<std::mutex> lock{mutex_};
+
+    resumeToken_.clear();
+  }
+
+  bool Session::can_resume(
+      Timestamp now,
+      std::chrono::milliseconds resumeWindow) const
+  {
+    if (resumeWindow.count() < 0)
+    {
+      return false;
+    }
+
+    std::lock_guard<std::mutex> lock{mutex_};
+
+    if (closedAt_ ||
+        resumeToken_.empty() ||
+        !detachedAt_)
+    {
+      return false;
+    }
+
+    if (connection_ && connection_->is_open())
+    {
+      return false;
+    }
+
+    if (now < *detachedAt_)
+    {
+      return false;
+    }
+
+    const auto detachedDuration =
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            now - *detachedAt_);
+
+    return detachedDuration <= resumeWindow;
+  }
+
+  bool Session::join_room(const RoomId &roomId)
+  {
+    if (roomId.empty())
+    {
+      throw Error{
+          ErrorCode::MembershipNotFound,
+          "session cannot join an empty room identifier"};
+    }
+
+    std::lock_guard<std::mutex> lock{mutex_};
+
+    if (closedAt_)
+    {
+      throw Error{
+          ErrorCode::SessionExpired,
+          "closed session cannot join a room"};
+    }
+
+    return rooms_.insert(roomId).second;
+  }
+
+  bool Session::leave_room(const RoomId &roomId)
+  {
+    if (roomId.empty())
+    {
+      throw Error{
+          ErrorCode::MembershipNotFound,
+          "session cannot leave an empty room identifier"};
+    }
+
+    std::lock_guard<std::mutex> lock{mutex_};
+
+    return rooms_.erase(roomId) != 0;
+  }
+
+  bool Session::has_room(
+      const RoomId &roomId) const
+  {
+    if (roomId.empty())
+    {
+      return false;
+    }
+
+    std::lock_guard<std::mutex> lock{mutex_};
+
+    return rooms_.contains(roomId);
+  }
+
+  std::set<RoomId> Session::rooms() const
+  {
+    std::lock_guard<std::mutex> lock{mutex_};
+
+    return rooms_;
+  }
+
+  void Session::acknowledge(
+      const RoomId &roomId,
+      EventId eventId)
+  {
+    if (roomId.empty())
+    {
+      throw Error{
+          ErrorCode::MembershipNotFound,
+          "session cannot acknowledge an empty room identifier"};
+    }
+
+    std::lock_guard<std::mutex> lock{mutex_};
+
+    roomCursors_[roomId] = eventId;
+  }
+
+  EventId Session::last_event_id(
+      const RoomId &roomId) const
+  {
+    if (roomId.empty())
+    {
+      return {};
+    }
+
+    std::lock_guard<std::mutex> lock{mutex_};
+
+    const auto iterator =
+        roomCursors_.find(roomId);
+
+    if (iterator == roomCursors_.end())
+    {
+      return {};
+    }
+
+    return iterator->second;
+  }
+
+  std::size_t Session::room_count() const
+  {
+    std::lock_guard<std::mutex> lock{mutex_};
+
+    return rooms_.size();
+  }
+
+  std::size_t Session::clear_rooms()
+  {
+    std::lock_guard<std::mutex> lock{mutex_};
+
+    const std::size_t removed =
+        rooms_.size();
+
+    rooms_.clear();
     return removed;
   }
 
-  std::size_t Server::prune_stale_presence(
-      Timestamp now)
-  {
-    require_running();
-
-    const PresenceStorePtr &store =
-        manager_->presence_store();
-
-    if (!store)
-    {
-      return 0;
-    }
-
-    const auto timeout =
-        std::chrono::duration_cast<std::chrono::milliseconds>(
-            manager_->config().presenceTimeout);
-
-    return store->prune_stale(
-        now,
-        timeout);
-  }
-
-  const RoomManagerPtr &
-  Server::manager() const noexcept
-  {
-    return manager_;
-  }
-
-  const NodeId &
-  Server::node_id() const noexcept
-  {
-    return manager_->node_id();
-  }
-
-  const Config &
-  Server::config() const noexcept
-  {
-    return manager_->config();
-  }
-
-  void Server::require_running() const
+  JsonObject Session::metadata() const
   {
     std::lock_guard<std::mutex> lock{mutex_};
 
-    if (status_ != ServerStatus::Running)
-    {
-      throw Error{
-          ErrorCode::RoomNotReady,
-          "realtime server is not running"};
-    }
+    return metadata_;
   }
 
-  void Server::require_registry_available() const
+  void Session::set_metadata(
+      JsonObject value)
   {
     std::lock_guard<std::mutex> lock{mutex_};
 
-    if (status_ == ServerStatus::Stopping)
+    metadata_ = std::move(value);
+  }
+
+  bool Session::is_valid() const
+  {
+    std::lock_guard<std::mutex> lock{mutex_};
+
+    if (sessionId_.empty())
     {
-      throw Error{
-          ErrorCode::RoomNotReady,
-          "realtime server is stopping"};
+      return false;
     }
 
-    if (status_ == ServerStatus::Failed)
+    if (connection_ &&
+        connection_->id().empty())
+    {
+      return false;
+    }
+
+    if (closedAt_ && connection_)
+    {
+      return false;
+    }
+
+    if (closedAt_ &&
+        !resumeToken_.empty())
+    {
+      return false;
+    }
+
+    if (connection_ && detachedAt_)
+    {
+      return false;
+    }
+
+    if (lastSeenAt_ < createdAt_)
+    {
+      return false;
+    }
+
+    if (detachedAt_ &&
+        *detachedAt_ < createdAt_)
+    {
+      return false;
+    }
+
+    if (closedAt_ &&
+        *closedAt_ < createdAt_)
+    {
+      return false;
+    }
+
+    return true;
+  }
+
+  void Session::validate() const
+  {
+    std::lock_guard<std::mutex> lock{mutex_};
+
+    if (sessionId_.empty())
     {
       throw Error{
-          ErrorCode::InternalError,
-          "realtime server is in a failed state"};
+          ErrorCode::SessionNotFound,
+          "logical session requires an identifier"};
+    }
+
+    if (connection_ &&
+        connection_->id().empty())
+    {
+      throw Error{
+          ErrorCode::ConnectionNotAttached,
+          "attached connection requires an identifier"};
+    }
+
+    if (closedAt_ && connection_)
+    {
+      throw Error{
+          ErrorCode::CorruptedState,
+          "closed session cannot retain an active connection"};
+    }
+
+    if (closedAt_ &&
+        !resumeToken_.empty())
+    {
+      throw Error{
+          ErrorCode::CorruptedState,
+          "closed session cannot retain a resume token"};
+    }
+
+    if (connection_ && detachedAt_)
+    {
+      throw Error{
+          ErrorCode::CorruptedState,
+          "connected session cannot retain a detachment timestamp"};
+    }
+
+    if (lastSeenAt_ < createdAt_)
+    {
+      throw Error{
+          ErrorCode::CorruptedState,
+          "session activity timestamp precedes session creation"};
+    }
+
+    if (detachedAt_ &&
+        *detachedAt_ < createdAt_)
+    {
+      throw Error{
+          ErrorCode::CorruptedState,
+          "session detachment timestamp precedes session creation"};
+    }
+
+    if (closedAt_ &&
+        *closedAt_ < createdAt_)
+    {
+      throw Error{
+          ErrorCode::CorruptedState,
+          "session closure timestamp precedes session creation"};
     }
   }
 

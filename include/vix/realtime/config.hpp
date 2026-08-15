@@ -47,9 +47,6 @@ namespace vix::realtime
     /** @brief Maximum number of commands waiting in one room queue. */
     std::size_t maxPendingCommandsPerRoom{1024};
 
-    /** @brief Maximum accepted serialized protocol payload size in bytes. */
-    std::size_t maxPayloadSize{64 * 1024};
-
     /** @brief Maximum number of events returned during one replay. */
     std::size_t maxReplayEvents{1000};
 
@@ -73,26 +70,9 @@ namespace vix::realtime
     std::chrono::milliseconds roomIdleTimeout{300000};
 
     /**
-     * @brief Maximum duration allowed for one command handler.
-     *
-     * A zero duration disables handler timeout enforcement.
-     */
-    std::chrono::milliseconds commandTimeout{5000};
-
-    /**
-     * @brief Maximum duration allowed for loading or restoring a room.
-     */
-    std::chrono::milliseconds roomOpenTimeout{10000};
-
-    /**
      * @brief Lifetime of a temporarily disconnected logical session.
      */
     std::chrono::seconds sessionResumeWindow{120};
-
-    /**
-     * @brief Interval expected between presence heartbeats.
-     */
-    std::chrono::seconds presenceHeartbeatInterval{30};
 
     /**
      * @brief Duration after which stale presence records are removed.

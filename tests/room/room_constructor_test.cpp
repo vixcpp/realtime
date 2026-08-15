@@ -338,18 +338,17 @@ namespace vix::realtime
           Error);
     }
 
-    TEST(RoomConstructorTest, RejectsNullSnapshotStore)
+    TEST(RoomConstructorTest, AcceptsNullOptionalSnapshotStore)
     {
-      EXPECT_THROW(
-          static_cast<void>(
-              std::make_unique<Room>(
-                  make_room_id(),
-                  std::make_unique<CounterState>(),
-                  std::make_unique<CounterHandler>(),
-                  make_event_store(),
-                  nullptr,
-                  Config{})),
-          Error);
+      EXPECT_NE(
+          std::make_unique<Room>(
+              make_room_id(),
+              std::make_unique<CounterState>(),
+              std::make_unique<CounterHandler>(),
+              make_event_store(),
+              nullptr,
+              Config{}),
+          nullptr);
     }
 
   } // namespace

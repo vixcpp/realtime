@@ -286,6 +286,17 @@ namespace vix::realtime
         const SessionPtr &session,
         std::string_view token) const;
 
+    [[nodiscard]] SessionResumeResult resume_session_locked(
+        const SessionPtr &session,
+        ConnectionPtr connection,
+        std::string_view token,
+        Timestamp now,
+        bool rotateToken);
+
+    void replay_rooms_locked(
+        Session &session,
+        const ConnectionPtr &connection) const;
+
     /** @brief Manager containing logical sessions and connections. */
     RoomManagerPtr manager_{};
 

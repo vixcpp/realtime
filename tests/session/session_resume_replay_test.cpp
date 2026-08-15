@@ -650,8 +650,12 @@ namespace vix::realtime
                   RecordingConnection>(
                   "connection-1")};
 
-      ReplayFixture()
+      explicit ReplayFixture(
+          std::size_t maxReplayEvents = 1000,
+          std::size_t maxReplayBytes = 4 * 1024 * 1024)
       {
+        config.maxReplayEvents = maxReplayEvents;
+        config.maxReplayBytes = maxReplayBytes;
         config.snapshotEveryEvents = 0;
         config.snapshotOnRoomClose = false;
 
@@ -1038,6 +1042,48 @@ namespace vix::realtime
           events[1].room_id(),
           std::optional<RoomId>{
               secondRoomId});
+    }
+
+    TEST(SessionResumeReplayTest, RejectsIncompleteReplayWithoutSnapshot)
+    {
+      ReplayFixture fixture{1};
+      const RoomId roomId = make_room_id();
+      const auto room = open_room(*fixture.manager, roomId);
+      join_session(*room, fixture.session);
+
+      ASSERT_TRUE(fixture.manager->execute(make_command(roomId, 1, "request-1")).is_accepted());
+      ASSERT_TRUE(fixture.manager->execute(make_command(roomId, 1, "request-2")).is_accepted());
+
+      const ResumeToken token = issue_token(*fixture.resume, *fixture.session);
+      const Timestamp now = SystemClock::now();
+      detach_session(*fixture.session, now);
+      const auto connection = std::make_shared<RecordingConnection>("connection-2");
+
+      EXPECT_THROW(
+          static_cast<void>(resume_session(*fixture.resume, fixture.session, connection, token, now)),
+          Error);
+      EXPECT_FALSE(fixture.session->connected());
+      EXPECT_TRUE(fixture.session->last_event_id(roomId).empty());
+    }
+
+    TEST(SessionResumeReplayTest, RejectsReplayThatExceedsByteLimit)
+    {
+      ReplayFixture fixture{1000, 1};
+      const RoomId roomId = make_room_id();
+      const auto room = open_room(*fixture.manager, roomId);
+      join_session(*room, fixture.session);
+      ASSERT_TRUE(fixture.manager->execute(make_command(roomId, 1, "request-1")).is_accepted());
+
+      const ResumeToken token = issue_token(*fixture.resume, *fixture.session);
+      const Timestamp now = SystemClock::now();
+      detach_session(*fixture.session, now);
+      const auto connection = std::make_shared<RecordingConnection>("connection-2");
+
+      EXPECT_THROW(
+          static_cast<void>(resume_session(*fixture.resume, fixture.session, connection, token, now)),
+          Error);
+      EXPECT_FALSE(fixture.session->connected());
+      EXPECT_TRUE(fixture.session->last_event_id(roomId).empty());
     }
 
   } // namespace

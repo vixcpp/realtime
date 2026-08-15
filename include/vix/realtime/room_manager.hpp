@@ -554,6 +554,17 @@ namespace vix::realtime
         Timestamp now = SystemClock::now());
 
     /**
+     * @brief Attach a connection and restore presence for an existing session.
+     *
+     * This overload supports a session supplied by a compatibility API that
+     * is not registered in the manager's session collection.
+     */
+    [[nodiscard]] ConnectionPtr attach_connection(
+        const SessionPtr &session,
+        ConnectionPtr connection,
+        Timestamp now = SystemClock::now());
+
+    /**
      * @brief Detach a specific connection from a logical session.
      *
      * Presence records are marked detached only when the connection ID matches
@@ -569,6 +580,11 @@ namespace vix::realtime
      */
     [[nodiscard]] ConnectionPtr detach_connection(
         const SessionId &sessionId,
+        const ConnectionId &connectionId,
+        Timestamp now = SystemClock::now());
+
+    [[nodiscard]] ConnectionPtr detach_connection(
+        const SessionPtr &session,
         const ConnectionId &connectionId,
         Timestamp now = SystemClock::now());
 
