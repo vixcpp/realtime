@@ -24,7 +24,6 @@
 
 #include <vix/realtime/api.hpp>
 #include <vix/realtime/connection.hpp>
-#include <vix/realtime/internal/token_generator.hpp>
 #include <vix/realtime/room_manager.hpp>
 #include <vix/realtime/session.hpp>
 #include <vix/realtime/session_id.hpp>
@@ -32,6 +31,11 @@
 
 namespace vix::realtime
 {
+  namespace internal
+  {
+    class TokenGenerator;
+  }
+
   /**
    * @brief Result of successfully resuming one logical session.
    */
@@ -82,23 +86,17 @@ namespace vix::realtime
     /**
      * @brief Construct a session resumption service.
      *
-     * When no token generator is supplied, a default generator with the
-     * `resume` prefix and 32 bytes of entropy is created.
-     *
      * @param manager Room manager containing logical sessions.
-     * @param tokenGenerator Optional opaque token generator.
      *
      * @throws vix::realtime::Error
      *         When the room manager is null.
      */
     explicit SessionResume(
-        RoomManagerPtr manager,
-        std::shared_ptr<internal::TokenGenerator> tokenGenerator = nullptr);
+        RoomManagerPtr manager);
 
     SessionResume(
         RoomManagerPtr manager,
-        std::chrono::milliseconds resumeWindow,
-        std::shared_ptr<internal::TokenGenerator> tokenGenerator = nullptr);
+        std::chrono::milliseconds resumeWindow);
 
     /**
      * @brief Issue and store a new token for one logical session.
@@ -242,14 +240,6 @@ namespace vix::realtime
      */
     [[nodiscard]] const RoomManagerPtr &
     manager() const noexcept;
-
-    /**
-     * @brief Return the opaque token generator.
-     *
-     * @return Shared token generator.
-     */
-    [[nodiscard]] const std::shared_ptr<internal::TokenGenerator> &
-    token_generator() const noexcept;
 
   private:
     /**

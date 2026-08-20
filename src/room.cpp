@@ -22,6 +22,9 @@
 #include <vix/realtime/protocol.hpp>
 #include <vix/realtime/session.hpp>
 
+#include "internal/room_runtime.hpp"
+#include <vix/realtime/internal/event_dispatcher.hpp>
+
 namespace vix::realtime
 {
   namespace
@@ -59,7 +62,6 @@ namespace vix::realtime
       EventStorePtr eventStore,
       SnapshotStorePtr snapshotStore,
       Config config,
-      std::shared_ptr<internal::EventDispatcher> eventDispatcher,
       std::optional<NodeId> ownerNodeId,
       JsonObject metadata)
       : roomId_(std::move(roomId)),
@@ -69,12 +71,11 @@ namespace vix::realtime
         eventStore_(std::move(eventStore)),
         snapshotStore_(std::move(snapshotStore)),
         config_(std::move(config)),
-        commandQueue_(config_.maxPendingCommandsPerRoom),
-        snapshotPolicy_(
+        runtime_(std::make_unique<internal::RoomRuntime>(
+            config_.maxPendingCommandsPerRoom,
             config_.snapshotEveryEvents,
             config_.snapshotsToKeep,
-            config_.snapshotOnRoomClose),
-        eventDispatcher_(std::move(eventDispatcher)),
+            config_.snapshotOnRoomClose)),
         status_(RoomStatus::Created),
         roomVersion_(),
         lastEventId_(),
@@ -169,7 +170,7 @@ namespace vix::realtime
 
   Room::~Room()
   {
-    commandQueue_.close();
+    runtime_->commandQueue.close();
   }
 
   CommandResult Room::open()
@@ -244,7 +245,7 @@ namespace vix::realtime
       catch (...)
       {
         status_ = RoomStatus::Failed;
-        commandQueue_.close();
+        runtime_->commandQueue.close();
         throw;
       }
     }
@@ -337,12 +338,12 @@ namespace vix::realtime
         sessionRefs_.clear();
         status_ = RoomStatus::Closed;
         touch_locked(now);
-        commandQueue_.close();
+        runtime_->commandQueue.close();
       }
       catch (...)
       {
         status_ = RoomStatus::Failed;
-        commandQueue_.close();
+        runtime_->commandQueue.close();
         throw;
       }
     }
@@ -355,7 +356,7 @@ namespace vix::realtime
     return result;
   }
 
-  internal::CommandQueueStatus Room::enqueue(
+  CommandQueueStatus Room::enqueue(
       RoomCommand command)
   {
     command.validate();
@@ -373,7 +374,7 @@ namespace vix::realtime
       if (status_ == RoomStatus::Closed ||
           status_ == RoomStatus::Closing)
       {
-        return internal::CommandQueueStatus::Closed;
+        return CommandQueueStatus::Closed;
       }
 
       if (status_ != RoomStatus::Open)
@@ -384,19 +385,17 @@ namespace vix::realtime
       }
     }
 
-    return commandQueue_.try_push(
+    return runtime_->commandQueue.try_push(
         std::move(command));
   }
 
   std::optional<CommandResult>
   Room::process_next()
   {
-    auto queued = commandQueue_.try_pop();
+    auto queued = runtime_->commandQueue.try_pop();
 
-    if (queued.status ==
-            internal::CommandQueueStatus::Empty ||
-        queued.status ==
-            internal::CommandQueueStatus::Closed)
+        if (queued.status == CommandQueueStatus::Empty ||
+            queued.status == CommandQueueStatus::Closed)
     {
       return std::nullopt;
     }
@@ -506,7 +505,7 @@ namespace vix::realtime
       catch (...)
       {
         status_ = RoomStatus::Failed;
-        commandQueue_.close();
+        runtime_->commandQueue.close();
         throw;
       }
 
@@ -932,7 +931,7 @@ namespace vix::realtime
 
   std::size_t Room::pending_command_count() const
   {
-    return commandQueue_.size();
+    return runtime_->commandQueue.size();
   }
 
   Timestamp Room::last_activity_at() const
@@ -1316,7 +1315,7 @@ namespace vix::realtime
     if (!force)
     {
       const internal::SnapshotDecision decision =
-          snapshotPolicy_.evaluate(
+          runtime_->snapshotPolicy.evaluate(
               roomVersion_,
               lastEventId_,
               latest ? &*latest : nullptr,
@@ -1346,7 +1345,7 @@ namespace vix::realtime
 
     snapshotStore_->prune(
         roomId_,
-        snapshotPolicy_.snapshots_to_keep());
+        runtime_->snapshotPolicy.snapshots_to_keep());
 
     return persisted;
   }

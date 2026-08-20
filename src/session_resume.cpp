@@ -24,14 +24,16 @@
 
 #include <vix/realtime/errors.hpp>
 #include <vix/realtime/protocol.hpp>
+#include <vix/realtime/internal/token_generator.hpp>
 
 namespace vix::realtime
 {
   SessionResume::SessionResume(
-      RoomManagerPtr manager,
-      std::shared_ptr<internal::TokenGenerator> tokenGenerator)
+      RoomManagerPtr manager)
       : manager_(std::move(manager)),
-        tokenGenerator_(std::move(tokenGenerator))
+        tokenGenerator_(std::make_shared<internal::TokenGenerator>(
+            internal::TokenGenerator::defaultEntropyBytes,
+            "resume"))
   {
     if (!manager_)
     {
@@ -40,22 +42,13 @@ namespace vix::realtime
           "session resume service requires a room manager"};
     }
 
-    if (!tokenGenerator_)
-    {
-      tokenGenerator_ =
-          std::make_shared<internal::TokenGenerator>(
-              internal::TokenGenerator::defaultEntropyBytes,
-              "resume");
-    }
   }
 
   SessionResume::SessionResume(
       RoomManagerPtr manager,
-      std::chrono::milliseconds resumeWindow,
-      std::shared_ptr<internal::TokenGenerator> tokenGenerator)
+      std::chrono::milliseconds resumeWindow)
       : SessionResume(
-            std::move(manager),
-            std::move(tokenGenerator))
+            std::move(manager))
   {
     if (resumeWindow.count() < 0)
     {
@@ -584,12 +577,6 @@ namespace vix::realtime
   SessionResume::manager() const noexcept
   {
     return manager_;
-  }
-
-  const std::shared_ptr<internal::TokenGenerator> &
-  SessionResume::token_generator() const noexcept
-  {
-    return tokenGenerator_;
   }
 
   void SessionResume::require_enabled() const

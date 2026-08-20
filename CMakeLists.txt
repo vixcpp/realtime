@@ -280,11 +280,11 @@ file(
 )
 
 file(
-  GLOB_RECURSE
+  GLOB
   REALTIME_PUBLIC_HEADERS
   CONFIGURE_DEPENDS
-  "${CMAKE_CURRENT_SOURCE_DIR}/include/*.hpp"
-  "${CMAKE_CURRENT_SOURCE_DIR}/include/*.h"
+  "${CMAKE_CURRENT_SOURCE_DIR}/include/vix/realtime/*.hpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/include/vix/realtime/*.h"
 )
 
 if(NOT VIX_REALTIME_WITH_WEBSOCKET)
@@ -318,6 +318,7 @@ if(REALTIME_SOURCES)
     STATIC
     ${REALTIME_SOURCES}
     ${REALTIME_PUBLIC_HEADERS}
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/vix/realtime.hpp"
   )
 
   set(
@@ -362,32 +363,95 @@ target_include_directories(
   $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
 
+function(vix_realtime_use_build_dependency dependency_target)
+  target_include_directories(
+    vix_realtime
+    PRIVATE
+    $<TARGET_PROPERTY:${dependency_target},INTERFACE_INCLUDE_DIRECTORIES>
+  )
+
+  target_compile_definitions(
+    vix_realtime
+    PRIVATE
+    $<TARGET_PROPERTY:${dependency_target},INTERFACE_COMPILE_DEFINITIONS>
+  )
+
+  target_compile_options(
+    vix_realtime
+    PRIVATE
+    $<TARGET_PROPERTY:${dependency_target},INTERFACE_COMPILE_OPTIONS>
+  )
+endfunction()
+
+if(VIX_REALTIME_ENABLE_INSTALL)
+  set(VIX_REALTIME_BUILD_DEPENDENCY_LINKS)
+  set(VIX_REALTIME_BUILD_WEBSOCKET_LINK)
+  set(VIX_REALTIME_BUILD_DB_LINK)
+else()
+  set(VIX_REALTIME_BUILD_DEPENDENCY_LINKS
+    ${VIX_REALTIME_CORE_TARGET}
+    ${VIX_REALTIME_ERROR_TARGET}
+    ${VIX_REALTIME_JSON_TARGET}
+    ${VIX_REALTIME_ASYNC_TARGET}
+    ${VIX_REALTIME_SYNC_TARGET}
+    ${VIX_REALTIME_TIME_TARGET}
+    ${VIX_REALTIME_UTILS_TARGET}
+    Threads::Threads
+  )
+  set(VIX_REALTIME_BUILD_WEBSOCKET_LINK
+    ${VIX_REALTIME_WEBSOCKET_TARGET})
+  set(VIX_REALTIME_BUILD_DB_LINK
+    ${VIX_REALTIME_DB_TARGET})
+endif()
+
+foreach(
+  dependency_target
+  IN ITEMS
+    ${VIX_REALTIME_CORE_TARGET}
+    ${VIX_REALTIME_ERROR_TARGET}
+    ${VIX_REALTIME_JSON_TARGET}
+    ${VIX_REALTIME_ASYNC_TARGET}
+    ${VIX_REALTIME_SYNC_TARGET}
+    ${VIX_REALTIME_TIME_TARGET}
+    ${VIX_REALTIME_UTILS_TARGET}
+    Threads::Threads
+)
+  vix_realtime_use_build_dependency(${dependency_target})
+endforeach()
+
 target_link_libraries(
   vix_realtime
-  ${VIX_REALTIME_LINK_SCOPE}
-  ${VIX_REALTIME_CORE_TARGET}
-  ${VIX_REALTIME_ERROR_TARGET}
-  ${VIX_REALTIME_JSON_TARGET}
-  ${VIX_REALTIME_ASYNC_TARGET}
-  ${VIX_REALTIME_SYNC_TARGET}
-  ${VIX_REALTIME_TIME_TARGET}
-  ${VIX_REALTIME_UTILS_TARGET}
-  Threads::Threads
+  INTERFACE
+  ${VIX_REALTIME_BUILD_DEPENDENCY_LINKS}
+  $<INSTALL_INTERFACE:vix::core>
+  $<INSTALL_INTERFACE:vix::error>
+  $<INSTALL_INTERFACE:vix::json>
+  $<INSTALL_INTERFACE:vix::async>
+  $<INSTALL_INTERFACE:vix::sync>
+  $<INSTALL_INTERFACE:vix::time>
+  $<INSTALL_INTERFACE:vix::utils>
+  $<INSTALL_INTERFACE:Threads::Threads>
 )
 
 if(VIX_REALTIME_WITH_WEBSOCKET)
+  vix_realtime_use_build_dependency(${VIX_REALTIME_WEBSOCKET_TARGET})
+
   target_link_libraries(
     vix_realtime
-    ${VIX_REALTIME_LINK_SCOPE}
-    ${VIX_REALTIME_WEBSOCKET_TARGET}
+    INTERFACE
+    ${VIX_REALTIME_BUILD_WEBSOCKET_LINK}
+    $<INSTALL_INTERFACE:vix::websocket>
   )
 endif()
 
 if(VIX_REALTIME_WITH_POSTGRES)
+  vix_realtime_use_build_dependency(${VIX_REALTIME_DB_TARGET})
+
   target_link_libraries(
     vix_realtime
-    ${VIX_REALTIME_LINK_SCOPE}
-    ${VIX_REALTIME_DB_TARGET}
+    INTERFACE
+    ${VIX_REALTIME_BUILD_DB_LINK}
+    $<INSTALL_INTERFACE:vix::db>
   )
 endif()
 
@@ -449,6 +513,15 @@ set_target_properties(
 # --------------------------------------------------------------------
 
 if(VIX_REALTIME_ENABLE_INSTALL)
+  # Local sibling targets are useful while building this module, but they are
+  # not part of this package export. The installed config resolves the stable
+  # package targets below with find_dependency().
+  set_property(
+    TARGET vix_realtime
+    PROPERTY INTERFACE_LINK_LIBRARIES
+      "$<TARGET_NAME_IF_EXISTS:vix::core>;$<TARGET_NAME_IF_EXISTS:vix::error>;$<TARGET_NAME_IF_EXISTS:vix::json>;$<TARGET_NAME_IF_EXISTS:vix::async>;$<TARGET_NAME_IF_EXISTS:vix::sync>;$<TARGET_NAME_IF_EXISTS:vix::time>;$<TARGET_NAME_IF_EXISTS:vix::utils>;Threads::Threads$<$<BOOL:${VIX_REALTIME_WITH_WEBSOCKET}>:;$<TARGET_NAME_IF_EXISTS:vix::websocket>>$<$<BOOL:${VIX_REALTIME_WITH_POSTGRES}>:;$<TARGET_NAME_IF_EXISTS:vix::db>>"
+  )
+
   set(
     VIX_REALTIME_INSTALL_CMAKEDIR
     "${CMAKE_INSTALL_LIBDIR}/cmake/vix_realtime"
@@ -512,15 +585,17 @@ if(VIX_REALTIME_ENABLE_INSTALL)
 
   if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/include")
     install(
-      DIRECTORY
-        include/
+      FILES
+        ${REALTIME_PUBLIC_HEADERS}
       DESTINATION
-        ${CMAKE_INSTALL_INCLUDEDIR}
-      FILES_MATCHING
-        PATTERN "*.hpp"
-        PATTERN "*.h"
-        PATTERN "*.inc"
-        PATTERN "internal" EXCLUDE
+        "${CMAKE_INSTALL_INCLUDEDIR}/vix/realtime"
+    )
+
+    install(
+      FILES
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/vix/realtime.hpp"
+      DESTINATION
+        "${CMAKE_INSTALL_INCLUDEDIR}/vix"
     )
   endif()
 endif()

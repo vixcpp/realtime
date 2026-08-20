@@ -30,11 +30,10 @@
 
 #include <vix/realtime/api.hpp>
 #include <vix/realtime/command_result.hpp>
+#include <vix/realtime/command_queue_status.hpp>
 #include <vix/realtime/config.hpp>
 #include <vix/realtime/connection.hpp>
 #include <vix/realtime/event_store.hpp>
-#include <vix/realtime/internal/command_queue.hpp>
-#include <vix/realtime/internal/event_dispatcher.hpp>
 #include <vix/realtime/local_presence_store.hpp>
 #include <vix/realtime/node_id.hpp>
 #include <vix/realtime/presence.hpp>
@@ -53,6 +52,7 @@ namespace vix::realtime
 {
   namespace internal
   {
+    class EventDispatcher;
     template <typename>
     inline constexpr bool dependentFalse = false;
 
@@ -669,7 +669,7 @@ namespace vix::realtime
      * @throws vix::realtime::Error
      *         When the room, session, or membership is invalid.
      */
-    [[nodiscard]] internal::CommandQueueStatus enqueue(
+    [[nodiscard]] CommandQueueStatus enqueue(
         RoomCommand command);
 
     /**
@@ -757,14 +757,6 @@ namespace vix::realtime
      */
     [[nodiscard]] const std::shared_ptr<RoomDirectory> &
     room_directory() const noexcept;
-
-    /**
-     * @brief Return the event dispatcher shared by local rooms.
-     *
-     * @return Event dispatcher.
-     */
-    [[nodiscard]] const std::shared_ptr<internal::EventDispatcher> &
-    event_dispatcher() const noexcept;
 
   private:
     /**

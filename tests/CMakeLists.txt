@@ -199,6 +199,100 @@ function(vix_realtime_add_test test_source)
   )
 endfunction()
 
+# Compile every installed public header from a tree that intentionally omits
+# private headers. This catches accidental public includes of internal/.
+set(
+  VIX_REALTIME_PUBLIC_HEADERS_STAGE
+  "${CMAKE_CURRENT_BINARY_DIR}/installed-headers/include"
+)
+
+file(
+  COPY
+    "${CMAKE_CURRENT_SOURCE_DIR}/../include/vix"
+  DESTINATION
+    "${VIX_REALTIME_PUBLIC_HEADERS_STAGE}"
+  PATTERN "internal" EXCLUDE
+)
+
+file(
+  GLOB
+  VIX_REALTIME_PUBLIC_HEADER_FILES
+  CONFIGURE_DEPENDS
+  "${CMAKE_CURRENT_SOURCE_DIR}/../include/vix/realtime/*.hpp"
+)
+
+list(
+  APPEND
+  VIX_REALTIME_PUBLIC_HEADER_FILES
+  "${CMAKE_CURRENT_SOURCE_DIR}/../include/vix/realtime.hpp"
+)
+
+set(VIX_REALTIME_PUBLIC_HEADER_COMPILE_SOURCES)
+
+foreach(public_header IN LISTS VIX_REALTIME_PUBLIC_HEADER_FILES)
+  file(RELATIVE_PATH header_relative
+    "${CMAKE_CURRENT_SOURCE_DIR}/../include"
+    "${public_header}")
+  string(REPLACE "/" "_" header_target_suffix "${header_relative}")
+  set(header_source
+    "${CMAKE_CURRENT_BINARY_DIR}/public-header-${header_target_suffix}.cpp")
+  file(WRITE "${header_source}"
+    "#include <${header_relative}>\nint main() { return 0; }\n")
+  list(APPEND VIX_REALTIME_PUBLIC_HEADER_COMPILE_SOURCES "${header_source}")
+endforeach()
+
+add_library(
+  vix_realtime_public_headers_compile
+  OBJECT
+  ${VIX_REALTIME_PUBLIC_HEADER_COMPILE_SOURCES}
+)
+
+target_compile_features(
+  vix_realtime_public_headers_compile
+  PRIVATE
+  cxx_std_20
+)
+
+target_include_directories(
+  vix_realtime_public_headers_compile
+  BEFORE
+  PRIVATE
+  "${VIX_REALTIME_PUBLIC_HEADERS_STAGE}"
+)
+
+target_link_libraries(
+  vix_realtime_public_headers_compile
+  PRIVATE
+  vix::realtime
+)
+
+add_executable(
+  vix_realtime_public_header_contract_test
+  "${CMAKE_CURRENT_SOURCE_DIR}/contract/public_header_contract.cpp"
+)
+
+target_compile_definitions(
+  vix_realtime_public_header_contract_test
+  PRIVATE
+  VIX_REALTIME_PUBLIC_HEADERS_STAGE="${VIX_REALTIME_PUBLIC_HEADERS_STAGE}"
+)
+
+target_link_libraries(
+  vix_realtime_public_header_contract_test
+  PRIVATE
+  GTest::gtest_main
+)
+
+add_dependencies(
+  vix_realtime_public_header_contract_test
+  vix_realtime_public_headers_compile
+)
+
+add_test(
+  NAME vix_realtime_public_header_contract
+  COMMAND vix_realtime_public_header_contract_test
+)
+
 foreach(test_source IN LISTS REALTIME_TEST_SOURCES)
   vix_realtime_add_test("${test_source}")
 endforeach()

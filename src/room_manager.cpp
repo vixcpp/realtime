@@ -23,6 +23,7 @@
 #include <vix/realtime/memory_event_store.hpp>
 #include <vix/realtime/memory_snapshot_store.hpp>
 #include <vix/realtime/protocol.hpp>
+#include <vix/realtime/internal/event_dispatcher.hpp>
 
 namespace vix::realtime
 {
@@ -539,7 +540,6 @@ namespace vix::realtime
             eventStore_,
             snapshotStore_,
             config_,
-            eventDispatcher_,
             nodeId_,
             std::move(metadata));
       }
@@ -550,6 +550,8 @@ namespace vix::realtime
                 roomId,
                 config_);
       }
+
+      room->set_event_dispatcher(eventDispatcher_);
 
       {
         std::lock_guard<std::mutex> lock{mutex_};
@@ -1207,7 +1209,7 @@ namespace vix::realtime
     return room->execute(command);
   }
 
-  internal::CommandQueueStatus
+  CommandQueueStatus
   RoomManager::enqueue(RoomCommand command)
   {
     command.validate();
@@ -1392,12 +1394,6 @@ namespace vix::realtime
   RoomManager::room_directory() const noexcept
   {
     return roomDirectory_;
-  }
-
-  const std::shared_ptr<internal::EventDispatcher> &
-  RoomManager::event_dispatcher() const noexcept
-  {
-    return eventDispatcher_;
   }
 
   void RoomManager::deliver_event(

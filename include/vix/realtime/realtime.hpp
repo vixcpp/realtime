@@ -33,6 +33,7 @@
 #include <vix/realtime/room_command.hpp>
 #include <vix/realtime/room_event.hpp>
 #include <vix/realtime/command_result.hpp>
+#include <vix/realtime/command_queue_status.hpp>
 #include <vix/realtime/room_snapshot.hpp>
 #include <vix/realtime/protocol.hpp>
 

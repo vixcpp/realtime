@@ -31,11 +31,9 @@
 
 #include <vix/realtime/api.hpp>
 #include <vix/realtime/command_result.hpp>
+#include <vix/realtime/command_queue_status.hpp>
 #include <vix/realtime/config.hpp>
 #include <vix/realtime/event_store.hpp>
-#include <vix/realtime/internal/command_queue.hpp>
-#include <vix/realtime/internal/event_dispatcher.hpp>
-#include <vix/realtime/internal/snapshot_policy.hpp>
 #include <vix/realtime/node_id.hpp>
 #include <vix/realtime/room_command.hpp>
 #include <vix/realtime/room_context.hpp>
@@ -49,6 +47,12 @@
 
 namespace vix::realtime
 {
+  namespace internal
+  {
+    class EventDispatcher;
+    struct RoomRuntime;
+  }
+
   class Session;
   using SessionPtr = std::shared_ptr<Session>;
 
@@ -151,7 +155,6 @@ namespace vix::realtime
         EventStorePtr eventStore,
         SnapshotStorePtr snapshotStore,
         Config config = {},
-        std::shared_ptr<internal::EventDispatcher> eventDispatcher = nullptr,
         std::optional<NodeId> ownerNodeId = std::nullopt,
         JsonObject metadata = {});
 
@@ -208,7 +211,7 @@ namespace vix::realtime
      * @throws vix::realtime::Error
      *         When the room or command is invalid.
      */
-    [[nodiscard]] internal::CommandQueueStatus enqueue(
+    [[nodiscard]] CommandQueueStatus enqueue(
         RoomCommand command);
 
     /**
@@ -467,14 +470,6 @@ namespace vix::realtime
     void clear_owner_node_id();
 
     /**
-     * @brief Replace the event dispatcher used by the room.
-     *
-     * @param dispatcher New event dispatcher.
-     */
-    void set_event_dispatcher(
-        std::shared_ptr<internal::EventDispatcher> dispatcher);
-
-    /**
      * @brief Return a copy of non-authoritative room metadata.
      *
      * @return Room metadata.
@@ -489,6 +484,12 @@ namespace vix::realtime
     void set_metadata(JsonObject value);
 
   private:
+    friend class RoomManager;
+
+    /** @brief Configure transport-independent delivery for manager-owned rooms. */
+    void set_event_dispatcher(
+        std::shared_ptr<internal::EventDispatcher> dispatcher);
+
     /**
      * @brief Build an execution context while the room lock is held.
      */
@@ -571,14 +572,11 @@ namespace vix::realtime
     /** @brief Realtime runtime configuration. */
     Config config_{};
 
-    /** @brief Bounded pending command queue. */
-    internal::CommandQueue commandQueue_;
+    /** @brief Private command queue and snapshot scheduling state. */
+    std::unique_ptr<internal::RoomRuntime> runtime_;
 
     /** @brief Direct command executions currently occupying queue capacity. */
     std::atomic<std::size_t> directCommandsInFlight_{0};
-
-    /** @brief Snapshot scheduling and retention policy. */
-    internal::SnapshotPolicy snapshotPolicy_;
 
     /** @brief Transport-independent event delivery. */
     std::shared_ptr<internal::EventDispatcher> eventDispatcher_{};

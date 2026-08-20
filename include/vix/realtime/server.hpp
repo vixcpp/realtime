@@ -25,9 +25,9 @@
 
 #include <vix/realtime/api.hpp>
 #include <vix/realtime/command_result.hpp>
+#include <vix/realtime/command_queue_status.hpp>
 #include <vix/realtime/config.hpp>
 #include <vix/realtime/connection.hpp>
-#include <vix/realtime/internal/command_queue.hpp>
 #include <vix/realtime/node_id.hpp>
 #include <vix/realtime/protocol.hpp>
 #include <vix/realtime/room.hpp>
@@ -377,7 +377,7 @@ namespace vix::realtime
      * @param command Room command.
      * @return Queue operation status.
      */
-    [[nodiscard]] internal::CommandQueueStatus enqueue(
+    [[nodiscard]] CommandQueueStatus enqueue(
         RoomCommand command);
 
     /**

@@ -455,7 +455,7 @@ namespace vix::realtime
     return manager_->execute(command);
   }
 
-  internal::CommandQueueStatus
+  CommandQueueStatus
   Server::enqueue(RoomCommand command)
   {
     require_running();

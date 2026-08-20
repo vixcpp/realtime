@@ -26,60 +26,10 @@
 #include <string_view>
 
 #include <vix/realtime/room_command.hpp>
+#include <vix/realtime/command_queue_status.hpp>
 
 namespace vix::realtime::internal
 {
-  /**
-   * @brief Result of a command queue operation.
-   */
-  enum class CommandQueueStatus : std::uint8_t
-  {
-    /** @brief The operation completed successfully. */
-    Success = 0,
-
-    /** @brief The bounded queue cannot accept another command. */
-    Full,
-
-    /** @brief The queue currently contains no command. */
-    Empty,
-
-    /** @brief The queue was permanently closed. */
-    Closed,
-
-    /** @brief The blocking operation exceeded its timeout. */
-    Timeout
-  };
-
-  /**
-   * @brief Return the stable textual representation of a queue status.
-   *
-   * @param status Queue operation status.
-   * @return Stable lowercase status identifier.
-   */
-  [[nodiscard]] constexpr std::string_view
-  to_string(CommandQueueStatus status) noexcept
-  {
-    switch (status)
-    {
-    case CommandQueueStatus::Success:
-      return "success";
-
-    case CommandQueueStatus::Full:
-      return "full";
-
-    case CommandQueueStatus::Empty:
-      return "empty";
-
-    case CommandQueueStatus::Closed:
-      return "closed";
-
-    case CommandQueueStatus::Timeout:
-      return "timeout";
-    }
-
-    return "closed";
-  }
-
   /**
    * @brief Result returned by a command removal operation.
    */
