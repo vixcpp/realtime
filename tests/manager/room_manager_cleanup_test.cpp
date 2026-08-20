@@ -1130,6 +1130,18 @@ namespace vix::realtime
           room,
           nullptr);
 
+      static_cast<void>(
+          fixture.manager->create_session(
+              make_session_id(),
+              Identity{
+                  "user-42"}));
+
+      ASSERT_TRUE(
+          fixture.manager->join_room(
+              make_session_id(),
+              roomId)
+              .is_accepted());
+
       const CommandResult result =
           fixture.manager->execute(
               make_command(
@@ -1138,6 +1150,12 @@ namespace vix::realtime
 
       ASSERT_TRUE(
           result.is_accepted());
+
+      ASSERT_TRUE(
+          fixture.manager->leave_room(
+              make_session_id(),
+              roomId)
+              .is_accepted());
 
       std::this_thread::sleep_for(
           std::chrono::milliseconds{
