@@ -372,6 +372,114 @@ namespace vix::realtime::internal
     return result;
   }
 
+  ReplayResult ReplayEngine::recover(
+      const RoomId &roomId,
+      EventId cursor,
+      SteadyTimestamp startedAt,
+      std::optional<RoomVersion> knownRoomVersion,
+      bool allowSnapshotFallback,
+      bool requireCompleteStream) const
+  {
+    if (roomId.empty())
+    {
+      throw Error{ErrorCode::RoomNotFound,
+                  "replay recovery requires a room identifier"};
+    }
+
+    options_.validate();
+    enforce_timeout(startedAt);
+
+    ReplayResult result;
+    result.lastEventId = cursor;
+    if (knownRoomVersion)
+    {
+      result.roomVersion = *knownRoomVersion;
+    }
+    const EventId observedLatestEventId = eventStore_->latest_event_id(roomId);
+    std::vector<RoomEvent> events = eventStore_->load_after(
+        roomId, cursor, query_limit());
+
+    if (events.size() > options_.maxEvents)
+    {
+      if (!allowSnapshotFallback || !snapshotStore_)
+      {
+        throw Error{ErrorCode::ReplayLimitExceeded,
+                    "replay exceeds the configured event limit"};
+      }
+
+      const auto snapshot = snapshotStore_->load_latest(roomId);
+      if (!snapshot || snapshot->last_event_id().empty() ||
+          snapshot->last_event_id() <= cursor)
+      {
+        throw Error{ErrorCode::ReplayLimitExceeded,
+                    "replay exceeds its event limit without a usable snapshot"};
+      }
+
+      snapshot->validate();
+      if (snapshot->room_id() != roomId)
+      {
+        throw Error{ErrorCode::CorruptedState,
+                    "replay snapshot belongs to another room"};
+      }
+
+      result.snapshot = *snapshot;
+      result.roomVersion = snapshot->room_version();
+      result.lastEventId = snapshot->last_event_id();
+      events = eventStore_->load_after(roomId, result.lastEventId, query_limit());
+      if (events.size() > options_.maxEvents)
+      {
+        throw Error{ErrorCode::ReplayLimitExceeded,
+                    "replay remains above its event limit after snapshot recovery"};
+      }
+    }
+
+    bool validateVersion = knownRoomVersion.has_value() ||
+        result.snapshot.has_value() || cursor.empty();
+    result.events.reserve(events.size());
+    for (const auto &event : events)
+    {
+      enforce_timeout(startedAt);
+      event.validate();
+      if (event.room_id() != roomId || event.event_id() != result.lastEventId.next())
+      {
+        throw Error{ErrorCode::CorruptedState,
+                    "replay event stream is inconsistent"};
+      }
+      if (validateVersion && event.room_version() != result.roomVersion.next())
+      {
+        throw Error{ErrorCode::CorruptedState,
+                    "replay room version is not contiguous"};
+      }
+
+      const std::size_t eventBytes = serialized_event_size(event);
+      if (eventBytes > options_.maxBytes ||
+          result.replayBytes > options_.maxBytes - eventBytes)
+      {
+        throw Error{ErrorCode::ReplayLimitExceeded,
+                    "replay exceeds the configured byte limit"};
+      }
+
+      result.lastEventId = event.event_id();
+      result.roomVersion = event.room_version();
+      result.replayBytes += eventBytes;
+      ++result.eventCount;
+      result.events.push_back(event);
+      validateVersion = true;
+    }
+
+    enforce_timeout(startedAt);
+    if (requireCompleteStream &&
+        result.lastEventId < observedLatestEventId)
+    {
+      throw Error{ErrorCode::ReplayUnavailable,
+                  "event store did not return the complete replay stream"};
+    }
+
+    result.elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        SteadyClock::now() - startedAt);
+    return result;
+  }
+
   const EventStorePtr &
   ReplayEngine::event_store() const noexcept
   {

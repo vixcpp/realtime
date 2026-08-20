@@ -17,13 +17,13 @@
 
 #include <cstddef>
 #include <chrono>
-#include <limits>
 #include <optional>
 #include <utility>
 #include <vector>
 
 #include <vix/realtime/errors.hpp>
 #include <vix/realtime/protocol.hpp>
+#include <vix/realtime/internal/replay_engine.hpp>
 #include <vix/realtime/internal/token_generator.hpp>
 
 namespace vix::realtime
@@ -516,55 +516,35 @@ namespace vix::realtime
   {
     const Config &config = manager_->config();
     const auto started = SteadyClock::now();
-    const auto queryLimit = config.maxReplayEvents == std::numeric_limits<std::size_t>::max()
-        ? config.maxReplayEvents : config.maxReplayEvents + 1;
+    const internal::ReplayEngine replayEngine =
+        internal::ReplayEngine::from_config(
+            config,
+            manager_->event_store(),
+            manager_->snapshot_store());
 
     std::vector<std::pair<RoomId, EventId>> replayCursors;
 
     for (const RoomId &roomId : session.rooms())
     {
-      EventId cursor = session.last_event_id(roomId);
-      std::vector<RoomEvent> events = manager_->event_store()->load_after(roomId, cursor, queryLimit);
-      if (events.size() > config.maxReplayEvents)
+      const EventId cursor = session.last_event_id(roomId);
+      const internal::ReplayResult replay = replayEngine.recover(
+          roomId,
+          cursor,
+          started);
+
+      if (replay.snapshot)
       {
-        const auto snapshot = manager_->snapshot_store()
-            ? manager_->snapshot_store()->load_latest(roomId) : std::nullopt;
-        if (!snapshot || snapshot->last_event_id().empty() ||
-            (!cursor.empty() && snapshot->last_event_id() <= cursor))
-        {
-          throw Error{ErrorCode::ReplayLimitExceeded,
-                      "session replay exceeds its event limit without a usable snapshot"};
-        }
-        connection->send(protocol::from_snapshot(*snapshot));
-        cursor = snapshot->last_event_id();
-        events = manager_->event_store()->load_after(roomId, cursor, queryLimit);
-        if (events.size() > config.maxReplayEvents)
-        {
-          throw Error{ErrorCode::ReplayLimitExceeded,
-                      "session replay remains above its event limit after snapshot recovery"};
-        }
+        connection->send(protocol::from_snapshot(*replay.snapshot));
       }
 
-      std::size_t replayBytes = 0;
-      for (const RoomEvent &event : events)
+      for (const RoomEvent &event : replay.events)
       {
-        const protocol::Envelope envelope = protocol::from_event(event);
-        replayBytes += protocol::serialize(envelope).size();
-        if (replayBytes > config.maxReplayBytes ||
-            SteadyClock::now() - started > config.replayTimeout)
-        {
-          throw Error{ErrorCode::ReplayLimitExceeded,
-                      "session replay exceeds its configured recovery limit"};
-        }
-        connection->send(envelope);
-        if (!event.event_id().empty())
-        {
-          cursor = event.event_id();
-        }
+        connection->send(protocol::from_event(event));
       }
-      if (cursor != session.last_event_id(roomId))
+
+      if (replay.lastEventId != cursor)
       {
-        replayCursors.emplace_back(roomId, cursor);
+        replayCursors.emplace_back(roomId, replay.lastEventId);
       }
     }
 

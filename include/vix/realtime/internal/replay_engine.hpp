@@ -191,6 +191,23 @@ namespace vix::realtime::internal
         std::optional<RoomSnapshot> snapshot) const;
 
     /**
+     * @brief Recover deliverable events for a session replay cursor.
+     *
+     * When the cursor requires more events than the configured limit, the
+     * latest usable snapshot is selected and events after it are returned.
+     * A caller that has already restored its own snapshot can disable the
+     * fallback and provide its known room version for stream validation.
+     * The result is not applied to a RoomState.
+     */
+    [[nodiscard]] ReplayResult recover(
+        const RoomId &roomId,
+        EventId cursor,
+        SteadyTimestamp startedAt = SteadyClock::now(),
+        std::optional<RoomVersion> knownRoomVersion = std::nullopt,
+        bool allowSnapshotFallback = true,
+        bool requireCompleteStream = true) const;
+
+    /**
      * @brief Return the authoritative event store.
      *
      * @return Event store.

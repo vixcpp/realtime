@@ -879,6 +879,29 @@ namespace vix::realtime
           VersionValue{5});
     }
 
+    TEST(SessionResumeSnapshotTest,
+         SnapshotFallbackCommitsTheRecoveredCursor)
+    {
+      SnapshotFixture fixture;
+
+      fixture.open_populated_room();
+
+      const auto connection =
+          fixture.resume_from(
+              EventId{});
+
+      ASSERT_EQ(
+          connection->snapshots().size(),
+          1U);
+
+      EXPECT_EQ(
+          fixture.session
+              ->last_event_id(
+                  make_room_id())
+              .value(),
+          EventIdValue{5});
+    }
+
   } // namespace
 
 } // namespace vix::realtime

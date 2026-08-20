@@ -15,7 +15,6 @@
 
 #include <vix/realtime/room.hpp>
 
-#include <limits>
 #include <utility>
 
 #include <vix/realtime/errors.hpp>
@@ -24,26 +23,12 @@
 
 #include "internal/room_runtime.hpp"
 #include <vix/realtime/internal/event_dispatcher.hpp>
+#include <vix/realtime/internal/replay_engine.hpp>
 
 namespace vix::realtime
 {
   namespace
   {
-    /**
-     * @brief Return a replay limit with one additional overflow element.
-     */
-    [[nodiscard]] std::size_t replay_query_limit(
-        std::size_t configuredLimit) noexcept
-    {
-      if (configuredLimit ==
-          std::numeric_limits<std::size_t>::max())
-      {
-        return configuredLimit;
-      }
-
-      return configuredLimit + 1;
-    }
-
     /**
      * @brief Return whether a command result permits a lifecycle transition.
      */
@@ -1200,25 +1185,22 @@ namespace vix::realtime
       }
     }
 
-    const std::size_t queryLimit =
-        replay_query_limit(
-            config_.maxReplayEvents);
+    const internal::ReplayEngine replayEngine =
+        internal::ReplayEngine::from_config(
+            config_,
+            eventStore_,
+            snapshotStore_);
 
-    const std::vector<RoomEvent> replayEvents =
-        eventStore_->load_after(
+    const internal::ReplayResult replay =
+        replayEngine.recover(
             roomId_,
             lastEventId_,
-            queryLimit);
+            SteadyClock::now(),
+            roomVersion_,
+            false,
+            false);
 
-    if (replayEvents.size() >
-        config_.maxReplayEvents)
-    {
-      throw Error{
-          ErrorCode::ReplayLimitExceeded,
-          "room replay exceeds the configured event limit"};
-    }
-
-    for (const auto &event : replayEvents)
+    for (const auto &event : replay.events)
     {
       apply_replay_event_locked(event);
     }
