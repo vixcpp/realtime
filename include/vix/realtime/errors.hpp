@@ -129,7 +129,13 @@ namespace vix::realtime
     Timeout,
 
     /** @brief An internal invariant was violated. */
-    InternalError
+    InternalError,
+
+    /** @brief The session already has an active connection. */
+    SessionAlreadyConnected,
+
+    /** @brief The session has never been detached for resumption. */
+    SessionNotDetached
   };
 
   /**

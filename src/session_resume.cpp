@@ -324,7 +324,7 @@ namespace vix::realtime
     if (sessionId.empty())
     {
       throw Error{
-          ErrorCode::InvalidResumeToken,
+          ErrorCode::SessionNotFound,
           "session resume requires a session identifier"};
     }
 
@@ -357,52 +357,8 @@ namespace vix::realtime
     if (!session)
     {
       throw Error{
-          ErrorCode::InvalidResumeToken,
-          "session resume credential is invalid"};
-    }
-
-    validate_token_locked(
-        session,
-        token);
-
-    if (session->closed())
-    {
-      throw Error{
-          ErrorCode::SessionExpired,
-          "logical session is permanently closed"};
-    }
-
-    if (session->connected())
-    {
-      throw Error{
-          ErrorCode::InvalidResumeToken,
-          "logical session already has an active connection"};
-    }
-
-    const std::optional<Timestamp> detachedAt =
-        session->detached_at();
-
-    if (!detachedAt)
-    {
-      throw Error{
-          ErrorCode::InvalidResumeToken,
-          "logical session has not been detached"};
-    }
-
-    if (now < *detachedAt)
-    {
-      throw Error{
-          ErrorCode::CorruptedState,
-          "session resume timestamp precedes detachment"};
-    }
-
-    if (!session->can_resume(
-            now,
-            resume_window()))
-    {
-      throw Error{
-          ErrorCode::SessionExpired,
-          "logical session resume window has expired"};
+          ErrorCode::SessionNotFound,
+          "logical session was not found"};
     }
 
     return resume_session_locked(
@@ -423,8 +379,8 @@ namespace vix::realtime
     if (!session)
     {
       throw Error{
-          ErrorCode::InvalidResumeToken,
-          "session resume requires a session"};
+          ErrorCode::SessionNotFound,
+          "logical session was not found"};
     }
 
     return resume(
@@ -445,13 +401,24 @@ namespace vix::realtime
     require_enabled();
     if (session.id().empty())
     {
-      throw Error{ErrorCode::InvalidResumeToken,
+      throw Error{ErrorCode::SessionNotFound,
                   "session resume requires a session identifier"};
     }
 
     std::lock_guard<std::mutex> lock{mutex_};
+
+    SessionPtr managedSession =
+        manager_->find_session(session.id());
+
+    if (!managedSession ||
+        managedSession.get() != &session)
+    {
+      throw Error{ErrorCode::SessionNotFound,
+                  "logical session was not found"};
+    }
+
     return resume_session_locked(
-        SessionPtr{&session, [](Session *) {}},
+        managedSession,
         std::move(connection), token, now, rotateToken);
   }
 
@@ -464,17 +431,44 @@ namespace vix::realtime
       throw Error{ErrorCode::ConnectionNotAttached,
                   "session resume requires an open identified connection"};
     }
-    validate_token_locked(session, token);
-    if (session->closed() || session->connected() || !session->detached_at() ||
-        !session->can_resume(now, resume_window()))
+    if (!session)
+    {
+      throw Error{ErrorCode::SessionNotFound,
+                  "logical session was not found"};
+    }
+
+    if (session->closed())
     {
       throw Error{ErrorCode::SessionExpired,
-                  "logical session is not eligible for resumption"};
+                  "logical session is permanently closed"};
     }
-    if (now < *session->detached_at())
+
+    if (session->connected())
+    {
+      throw Error{ErrorCode::SessionAlreadyConnected,
+                  "logical session already has an active connection"};
+    }
+
+    const std::optional<Timestamp> detachedAt = session->detached_at();
+
+    if (!detachedAt)
+    {
+      throw Error{ErrorCode::SessionNotDetached,
+                  "logical session has not been detached"};
+    }
+
+    if (now < *detachedAt)
     {
       throw Error{ErrorCode::CorruptedState,
                   "session resume timestamp precedes detachment"};
+    }
+
+    validate_token_locked(session, token);
+
+    if (!session->can_resume(now, resume_window()))
+    {
+      throw Error{ErrorCode::SessionExpired,
+                  "logical session resume window has expired"};
     }
     if (session->room_count() > manager_->config().maxResumeRooms)
     {

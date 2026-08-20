@@ -491,7 +491,7 @@ namespace vix::realtime
 
       std::shared_ptr<Session>
           session{
-              std::make_shared<Session>(
+              manager->create_session(
                   SessionId{
                       std::string_view{
                           "session-42"}},

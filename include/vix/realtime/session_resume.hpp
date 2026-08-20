@@ -200,9 +200,13 @@ namespace vix::realtime
      * @return Successful session resumption result.
      *
      * @throws vix::realtime::Error
-     *         With `InvalidResumeToken` when the credential is invalid,
-     *         `SessionExpired` when the resume window elapsed, or a connection
-     *         error when attachment fails.
+     *         With `SessionNotFound` for an unknown session,
+     *         `InvalidResumeToken` for an invalid credential,
+     *         `SessionAlreadyConnected` or `SessionNotDetached` for an
+     *         ineligible lifecycle state, `SessionExpired` for a closed
+     *         session or elapsed resume window, `CorruptedState` for a resume
+     *         timestamp before detachment, or `ConnectionNotAttached` for an
+     *         invalid replacement connection.
      */
     [[nodiscard]] SessionResumeResult resume(
         const SessionId &sessionId,

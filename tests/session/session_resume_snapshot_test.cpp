@@ -551,13 +551,7 @@ namespace vix::realtime
           resume{};
 
       std::shared_ptr<Session>
-          session{
-              std::make_shared<Session>(
-                  SessionId{
-                      std::string_view{
-                          "session-42"}},
-                  Identity{
-                      "user-42"})};
+          session{};
 
       SnapshotFixture()
       {
@@ -575,6 +569,13 @@ namespace vix::realtime
                     std::string_view{
                         "node-1"}},
                 config);
+
+        session = manager->create_session(
+            SessionId{
+                std::string_view{
+                    "session-42"}},
+            Identity{
+                "user-42"});
 
         register_factory(
             *manager,

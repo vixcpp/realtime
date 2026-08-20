@@ -74,6 +74,10 @@ namespace vix::realtime
       return "timeout";
     case ErrorCode::InternalError:
       return "internal_error";
+    case ErrorCode::SessionAlreadyConnected:
+      return "session_already_connected";
+    case ErrorCode::SessionNotDetached:
+      return "session_not_detached";
     }
 
     return "internal_error";
