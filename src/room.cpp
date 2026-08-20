@@ -1149,11 +1149,49 @@ namespace vix::realtime
 
   void Room::restore_locked()
   {
+    RoomStatePtr previousState =
+        state_->clone();
+
+    if (!previousState)
+    {
+      throw Error{
+          ErrorCode::MissingDependency,
+          "room state clone returned a null state"};
+    }
+
+    struct RestoreRollback
+    {
+      RoomStatePtr &state;
+      RoomVersion &version;
+      EventId &eventId;
+      RoomStatePtr previousState;
+      RoomVersion previousVersion;
+      EventId previousEventId;
+      bool committed{false};
+
+      ~RestoreRollback()
+      {
+        if (!committed)
+        {
+          state = std::move(previousState);
+          version = previousVersion;
+          eventId = previousEventId;
+        }
+      }
+    } rollback{
+        state_,
+        roomVersion_,
+        lastEventId_,
+        std::move(previousState),
+        roomVersion_,
+        lastEventId_};
+
     roomVersion_ = RoomVersion{};
     lastEventId_ = EventId{};
 
     if (!config_.restoreRoomsOnOpen)
     {
+      rollback.committed = true;
       return;
     }
 
@@ -1204,6 +1242,8 @@ namespace vix::realtime
     {
       apply_replay_event_locked(event);
     }
+
+    rollback.committed = true;
   }
 
   void Room::apply_replay_event_locked(

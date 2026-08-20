@@ -86,6 +86,17 @@ namespace vix::realtime
         {
           value_ = 0;
         }
+        else if (event.type() ==
+                 "counter.mutate_then_fail")
+        {
+          value_ +=
+              payload.at("amount")
+                  .get<std::int64_t>();
+
+          throw Error{
+              ErrorCode::EventApplyFailure,
+              "counter event failed after mutation"};
+        }
         else
         {
           throw Error{
@@ -773,6 +784,39 @@ namespace vix::realtime
 
       EXPECT_FALSE(
           room->is_open());
+    }
+
+    TEST(RoomRestoreTest, ApplyFailureRollsBackRestoredState)
+    {
+      RoomDependencies dependencies;
+
+      static_cast<void>(
+          dependencies.eventStore->append(
+              make_event(
+                  VersionValue{1},
+                  5)));
+
+      static_cast<void>(
+          dependencies.eventStore->append(
+              make_event(
+                  VersionValue{2},
+                  3,
+                  "counter.mutate_then_fail")));
+
+      auto room =
+          make_room(
+              dependencies,
+              7);
+
+      EXPECT_THROW(
+          static_cast<void>(room->open()),
+          Error);
+
+      EXPECT_EQ(room->status(), RoomStatus::Failed);
+      EXPECT_EQ(counter_state(*room).value(), std::int64_t{7});
+      EXPECT_TRUE(room->version().is_initial());
+      EXPECT_TRUE(room->last_event_id().empty());
+      EXPECT_TRUE(counter_state(*room).applied_event_ids().empty());
     }
 
     TEST(RoomRestoreTest, UnsupportedReplayEventFailsRestoration)
