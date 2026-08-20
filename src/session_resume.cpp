@@ -478,33 +478,48 @@ namespace vix::realtime
 
     const ResumeToken previousToken = session->resume_token();
     ResumeToken nextToken = rotateToken ? tokenGenerator_->generate() : previousToken;
-    const ConnectionId connectionId = connection->id();
-    ConnectionPtr replaced = manager_->attach_connection(session, connection, now);
+
+    // Replay before changing session ownership, presence, or cursors. A
+    // failure in any room therefore leaves the detached session unchanged.
+    const auto replayCursors = replay_rooms_locked(*session, connection);
+
     try
     {
       if (rotateToken)
       {
         session->set_resume_token(nextToken);
       }
-      replay_rooms_locked(*session, connection);
+
+      ConnectionPtr replaced = manager_->attach_connection(session, connection, now);
+
+      for (const auto &[roomId, cursor] : replayCursors)
+      {
+        session->acknowledge(roomId, cursor);
+      }
+
+      return SessionResumeResult{
+          session,
+          std::move(replaced),
+          std::move(nextToken),
+          rotateToken};
     }
     catch (...)
     {
       try { session->set_resume_token(previousToken); } catch (...) {}
-      try { static_cast<void>(manager_->detach_connection(session, connectionId, now)); } catch (...) {}
-      try { connection->close(ErrorCode::ReplayLimitExceeded, "session resume recovery failed"); } catch (...) {}
       throw;
     }
-    return SessionResumeResult{session, std::move(replaced), std::move(nextToken), rotateToken};
   }
 
-  void SessionResume::replay_rooms_locked(
+  std::vector<std::pair<RoomId, EventId>>
+  SessionResume::replay_rooms_locked(
       Session &session, const ConnectionPtr &connection) const
   {
     const Config &config = manager_->config();
     const auto started = SteadyClock::now();
     const auto queryLimit = config.maxReplayEvents == std::numeric_limits<std::size_t>::max()
         ? config.maxReplayEvents : config.maxReplayEvents + 1;
+
+    std::vector<std::pair<RoomId, EventId>> replayCursors;
 
     for (const RoomId &roomId : session.rooms())
     {
@@ -549,9 +564,11 @@ namespace vix::realtime
       }
       if (cursor != session.last_event_id(roomId))
       {
-        session.acknowledge(roomId, cursor);
+        replayCursors.emplace_back(roomId, cursor);
       }
     }
+
+    return replayCursors;
   }
 
   std::chrono::milliseconds

@@ -21,6 +21,7 @@
 #include <mutex>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include <vix/realtime/api.hpp>
 #include <vix/realtime/connection.hpp>
@@ -287,7 +288,8 @@ namespace vix::realtime
         Timestamp now,
         bool rotateToken);
 
-    void replay_rooms_locked(
+    [[nodiscard]] std::vector<std::pair<RoomId, EventId>>
+    replay_rooms_locked(
         Session &session,
         const ConnectionPtr &connection) const;
 

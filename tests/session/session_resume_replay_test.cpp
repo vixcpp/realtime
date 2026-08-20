@@ -1087,6 +1087,59 @@ namespace vix::realtime
       EXPECT_TRUE(fixture.session->last_event_id(roomId).empty());
     }
 
+    TEST(SessionResumeReplayTest, LaterRoomFailureRollsBackEveryEarlierReplayChange)
+    {
+      ReplayFixture fixture{1};
+      const RoomId firstRoomId = make_room_id("counter/first");
+      const RoomId secondRoomId = make_room_id("counter/second");
+      const auto firstRoom = open_room(*fixture.manager, firstRoomId);
+      const auto secondRoom = open_room(*fixture.manager, secondRoomId);
+
+      join_session(*firstRoom, fixture.session);
+      join_session(*secondRoom, fixture.session);
+
+      ASSERT_TRUE(
+          fixture.manager->execute(
+              make_command(firstRoomId, 1, "first-request"))
+              .is_accepted());
+      ASSERT_TRUE(
+          fixture.manager->execute(
+              make_command(secondRoomId, 1, "second-request-1"))
+              .is_accepted());
+      ASSERT_TRUE(
+          fixture.manager->execute(
+              make_command(secondRoomId, 1, "second-request-2"))
+              .is_accepted());
+
+      const ResumeToken token = issue_token(*fixture.resume, *fixture.session);
+      const Timestamp now = SystemClock::now();
+      detach_session(*fixture.session, now);
+      const auto connection = std::make_shared<RecordingConnection>("connection-2");
+
+      EXPECT_THROW(
+          static_cast<void>(
+              resume_session(
+                  *fixture.resume,
+                  fixture.session,
+                  connection,
+                  token,
+                  now + std::chrono::seconds{1})),
+          Error);
+
+      EXPECT_FALSE(fixture.session->connected());
+      EXPECT_EQ(fixture.session->resume_token(), token);
+      EXPECT_TRUE(fixture.session->last_event_id(firstRoomId).empty());
+      EXPECT_TRUE(fixture.session->last_event_id(secondRoomId).empty());
+      EXPECT_TRUE(connection->is_open());
+
+      const auto presenceStore = fixture.manager->presence_store();
+      ASSERT_NE(presenceStore, nullptr);
+      EXPECT_FALSE(
+          presenceStore->find(firstRoomId, fixture.session->id()).has_value());
+      EXPECT_FALSE(
+          presenceStore->find(secondRoomId, fixture.session->id()).has_value());
+    }
+
   } // namespace
 
 } // namespace vix::realtime
