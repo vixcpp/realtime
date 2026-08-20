@@ -34,6 +34,7 @@
 #include <vix/realtime/event_audience.hpp>
 #include <vix/realtime/event_store.hpp>
 #include <vix/realtime/node_id.hpp>
+#include <vix/realtime/presence.hpp>
 #include <vix/realtime/protocol.hpp>
 #include <vix/realtime/room.hpp>
 #include <vix/realtime/room_command.hpp>
@@ -1138,6 +1139,74 @@ namespace vix::realtime
           presenceStore->find(firstRoomId, fixture.session->id()).has_value());
       EXPECT_FALSE(
           presenceStore->find(secondRoomId, fixture.session->id()).has_value());
+    }
+
+    TEST(SessionResumeReplayTest,
+         PresenceTracksDetachResumeAndLeave)
+    {
+      ReplayFixture fixture;
+      const RoomId roomId = make_room_id();
+      const auto room = open_room(*fixture.manager, roomId);
+      ASSERT_NE(room, nullptr);
+      join_session(*room, fixture.session);
+
+      const Timestamp attachedAt = SystemClock::now();
+      static_cast<void>(
+          fixture.manager->attach_connection(
+              fixture.session,
+              fixture.previousConnection,
+              attachedAt));
+
+      const auto presenceStore = fixture.manager->presence_store();
+      ASSERT_NE(presenceStore, nullptr);
+
+      const auto initiallyPresent =
+          presenceStore->find(roomId, fixture.session->id());
+      ASSERT_TRUE(initiallyPresent.has_value());
+      EXPECT_EQ(initiallyPresent->status(), PresenceStatus::Present);
+
+      const Timestamp detachedAt =
+          attachedAt + std::chrono::seconds{1};
+      static_cast<void>(
+          fixture.manager->detach_connection(
+              fixture.session,
+              fixture.previousConnection->id(),
+              detachedAt));
+
+      const auto detached =
+          presenceStore->find(roomId, fixture.session->id());
+      ASSERT_TRUE(detached.has_value());
+      EXPECT_EQ(detached->status(), PresenceStatus::Detached);
+
+      const ResumeToken token = issue_token(*fixture.resume, *fixture.session);
+      const auto connection =
+          std::make_shared<RecordingConnection>("connection-2");
+
+      static_cast<void>(
+          resume_session(
+              *fixture.resume,
+              fixture.session,
+              connection,
+              token,
+              detachedAt + std::chrono::seconds{1}));
+
+      const auto resumed =
+          presenceStore->find(roomId, fixture.session->id());
+      ASSERT_TRUE(resumed.has_value());
+      EXPECT_EQ(resumed->status(), PresenceStatus::Present);
+      EXPECT_EQ(resumed->connection_id(), connection->id());
+
+      static_cast<void>(
+          fixture.manager->leave_room(
+              fixture.session->id(),
+              roomId,
+              detachedAt + std::chrono::seconds{2}));
+
+      const auto left =
+          presenceStore->find(roomId, fixture.session->id());
+      ASSERT_TRUE(left.has_value());
+      EXPECT_EQ(left->status(), PresenceStatus::Left);
+      EXPECT_TRUE(left->left_at().has_value());
     }
 
   } // namespace

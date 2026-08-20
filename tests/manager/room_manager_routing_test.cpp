@@ -32,6 +32,7 @@
 #include <vix/realtime/event_audience.hpp>
 #include <vix/realtime/event_store.hpp>
 #include <vix/realtime/node_id.hpp>
+#include <vix/realtime/presence.hpp>
 #include <vix/realtime/room.hpp>
 #include <vix/realtime/room_command.hpp>
 #include <vix/realtime/room_context.hpp>
@@ -725,12 +726,14 @@ namespace vix::realtime
     }
 
     [[nodiscard]] ManagerFixture
-    make_fixture()
+    make_fixture(
+        std::size_t maxSessionsPerRoom = 16)
     {
       ManagerFixture fixture;
 
       fixture.config.maxActiveRooms = 16;
       fixture.config.maxPendingCommandsPerRoom = 16;
+      fixture.config.maxSessionsPerRoom = maxSessionsPerRoom;
       fixture.config.snapshotEveryEvents = 0;
       fixture.config.snapshotOnRoomClose = false;
 
@@ -830,6 +833,66 @@ namespace vix::realtime
               *room)
               .value(),
           std::int64_t{5});
+    }
+
+    TEST(RoomManagerRoutingTest, JoiningDetachedSessionCreatesDetachedPresence)
+    {
+      ManagerFixture fixture =
+          make_fixture();
+
+      ASSERT_NE(
+          open_room(
+              *fixture.manager,
+              make_room_id(),
+              "counter"),
+          nullptr);
+
+      const auto presence =
+          fixture.manager->find_presence(
+              make_room_id(),
+              make_session_id());
+
+      ASSERT_TRUE(presence.has_value());
+      EXPECT_EQ(presence->status(), PresenceStatus::Detached);
+      EXPECT_TRUE(presence->connection_id().empty());
+      EXPECT_TRUE(presence->detached_at().has_value());
+    }
+
+    TEST(RoomManagerRoutingTest, FailedJoinRollsBackPresence)
+    {
+      ManagerFixture fixture =
+          make_fixture(1);
+
+      ASSERT_NE(
+          open_room(
+              *fixture.manager,
+              make_room_id(),
+              "counter"),
+          nullptr);
+
+      const SessionId secondSessionId{
+          std::string_view{
+              "session-43"}};
+      static_cast<void>(
+          fixture.manager->create_session(secondSessionId));
+
+      EXPECT_THROW(
+          static_cast<void>(
+              fixture.manager->join_room(
+                  secondSessionId,
+                  make_room_id())),
+          Error);
+
+      EXPECT_FALSE(
+          fixture.manager
+              ->find_presence(
+                  make_room_id(),
+                  secondSessionId)
+              .has_value());
+      EXPECT_FALSE(
+          fixture.manager
+              ->require_session(secondSessionId)
+              ->has_room(make_room_id()));
     }
 
     TEST(RoomManagerRoutingTest, RejectsCommandForUnknownSession)

@@ -1074,6 +1074,11 @@ namespace vix::realtime
             now,
             session->metadata()};
 
+        if (!session->connected())
+        {
+          presence.mark_detached(now);
+        }
+
         static_cast<void>(
             presenceStore_->upsert(
                 std::move(presence)));
