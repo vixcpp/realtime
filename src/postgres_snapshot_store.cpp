@@ -33,7 +33,8 @@
 #include <vix/realtime/errors.hpp>
 #include <vix/realtime/types.hpp>
 
-#if defined(VIX_REALTIME_ENABLE_POSTGRES) || \
+#if (defined(VIX_REALTIME_WITH_POSTGRES) && VIX_REALTIME_WITH_POSTGRES) || \
+    defined(VIX_REALTIME_ENABLE_POSTGRES) || \
     defined(VIX_REALTIME_HAS_POSTGRES) ||    \
     defined(VIX_ENABLE_POSTGRES) ||          \
     defined(VIX_DB_USE_POSTGRES)

@@ -1074,24 +1074,6 @@ namespace vix::realtime
       return command;
     }
 
-    void deliver_result(
-        const CommandResult &result,
-        const ConnectionPtr &connection)
-    {
-      if (!result.is_accepted())
-      {
-        return;
-      }
-
-      for (const RoomEvent &event :
-           result.events())
-      {
-        connection->send(
-            protocol::from_event(
-                event));
-      }
-    }
-
     [[nodiscard]] const CounterState &
     counter_state(
         const Room &room)
@@ -1155,7 +1137,7 @@ namespace vix::realtime
                 manager);
 
         session =
-            std::make_shared<Session>(
+            manager->create_session(
                 make_session_id(),
                 Identity{
                     "user-42"});
@@ -1165,8 +1147,10 @@ namespace vix::realtime
                 RecordingConnection>(
                 "connection-1");
 
-        session->attach(
-            firstConnection);
+        static_cast<void>(
+            manager->attach_connection(
+                session->id(),
+                firstConnection));
       }
     };
 
@@ -1240,10 +1224,6 @@ namespace vix::realtime
 
       ASSERT_TRUE(
           result.is_accepted());
-
-      deliver_result(
-          result,
-          fixture.firstConnection);
 
       EXPECT_EQ(
           counter_state(

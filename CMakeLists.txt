@@ -447,6 +447,16 @@ endif()
 if(VIX_REALTIME_WITH_POSTGRES)
   vix_realtime_use_build_dependency(${VIX_REALTIME_DB_TARGET})
 
+  find_package(PostgreSQL REQUIRED)
+
+  if(TARGET PostgreSQL::PostgreSQL)
+    target_link_libraries(vix_realtime PRIVATE PostgreSQL::PostgreSQL)
+  elseif(TARGET PostgreSQL::libpq)
+    target_link_libraries(vix_realtime PRIVATE PostgreSQL::libpq)
+  else()
+    message(FATAL_ERROR "[realtime] PostgreSQL support requires a libpq target")
+  endif()
+
   target_link_libraries(
     vix_realtime
     INTERFACE

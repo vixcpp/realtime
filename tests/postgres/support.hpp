@@ -12,6 +12,7 @@
 #include <vix/json/json.hpp>
 #include <vix/realtime/event_audience.hpp>
 #include <vix/realtime/event_id.hpp>
+#include <vix/realtime/errors.hpp>
 #include <vix/realtime/postgres_event_store.hpp>
 #include <vix/realtime/postgres_snapshot_store.hpp>
 #include <vix/realtime/room_event.hpp>
