@@ -430,6 +430,8 @@ namespace vix::realtime
         ManagerType &manager,
         const RoomId &roomId)
     {
+      std::shared_ptr<Room> room;
+
       if constexpr (
           requires {
             manager.open_room(
@@ -438,7 +440,7 @@ namespace vix::realtime
                     "counter"});
           })
       {
-        return room_handle(
+        room = room_handle(
             manager.open_room(
                 roomId,
                 std::string_view{
@@ -452,7 +454,7 @@ namespace vix::realtime
                     "counter"});
           })
       {
-        return room_handle(
+        room = room_handle(
             manager.open_room(
                 roomId,
                 std::string{
@@ -464,6 +466,18 @@ namespace vix::realtime
             dependentFalse<ManagerType>,
             "Unsupported RoomManager open_room API");
       }
+
+      if (room)
+      {
+        static_cast<void>(
+            manager.join_room(
+                SessionId{
+                    std::string_view{
+                        "session-42"}},
+                roomId));
+      }
+
+      return room;
     }
 
     template <typename ManagerType>
@@ -592,6 +606,10 @@ namespace vix::realtime
           "counter",
           sharedFactory,
           uniqueFactory);
+
+      static_cast<void>(
+          fixture.manager->create_session(
+              make_session_id()));
 
       return fixture;
     }

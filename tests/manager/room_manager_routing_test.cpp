@@ -40,6 +40,7 @@
 #include <vix/realtime/room_id.hpp>
 #include <vix/realtime/room_manager.hpp>
 #include <vix/realtime/room_state.hpp>
+#include <vix/realtime/server.hpp>
 #include <vix/realtime/session_id.hpp>
 #include <vix/realtime/snapshot_store.hpp>
 #include <vix/realtime/types.hpp>
@@ -478,6 +479,8 @@ namespace vix::realtime
         const RoomId &roomId,
         std::string_view factoryType)
     {
+      Room *room = nullptr;
+
       if constexpr (
           requires {
             manager.open_room(
@@ -490,8 +493,7 @@ namespace vix::realtime
                 roomId,
                 factoryType);
 
-        return room_pointer(
-            result);
+        room = room_pointer(result);
       }
       else if constexpr (
           requires {
@@ -507,8 +509,7 @@ namespace vix::realtime
                 std::string{
                     factoryType});
 
-        return room_pointer(
-            result);
+        room = room_pointer(result);
       }
       else if constexpr (
           requires {
@@ -522,8 +523,7 @@ namespace vix::realtime
                 factoryType,
                 roomId);
 
-        return room_pointer(
-            result);
+        room = room_pointer(result);
       }
       else
       {
@@ -531,6 +531,18 @@ namespace vix::realtime
             dependentFalse<ManagerType>,
             "Unsupported RoomManager open_room API");
       }
+
+      if (room)
+      {
+        static_cast<void>(
+            manager.join_room(
+                SessionId{
+                    std::string_view{
+                        "session-42"}},
+                roomId));
+      }
+
+      return room;
     }
 
     template <typename ManagerType>
@@ -747,6 +759,10 @@ namespace vix::realtime
           sharedFactory,
           uniqueFactory);
 
+      static_cast<void>(
+          fixture.manager->create_session(
+              make_session_id()));
+
       return fixture;
     }
 
@@ -814,6 +830,160 @@ namespace vix::realtime
               *room)
               .value(),
           std::int64_t{5});
+    }
+
+    TEST(RoomManagerRoutingTest, RejectsCommandForUnknownSession)
+    {
+      ManagerFixture fixture =
+          make_fixture();
+
+      ASSERT_NE(
+          open_room(
+              *fixture.manager,
+              make_room_id(),
+              "counter"),
+          nullptr);
+
+      JsonObject payload;
+      payload.set_i64("amount", 1);
+
+      const RoomCommand command{
+          make_room_id(),
+          SessionId{
+              std::string_view{
+                  "session-missing"}},
+          "counter.increment",
+          payload,
+          "request-1"};
+
+      try
+      {
+        static_cast<void>(
+            fixture.manager->execute(command));
+        FAIL() << "expected an unknown session error";
+      }
+      catch (const Error &error)
+      {
+        EXPECT_EQ(error.code(), ErrorCode::SessionNotFound);
+      }
+    }
+
+    TEST(RoomManagerRoutingTest,
+         ServerAndManagerPrioritizeUnknownSessionConsistently)
+    {
+      auto manager =
+          std::make_shared<RoomManager>(
+              NodeId{
+                  std::string_view{
+                      "node-1"}},
+              Config{});
+
+      Server server{manager};
+      ASSERT_TRUE(server.start());
+
+      const RoomCommand command =
+          make_command(
+              make_room_id("counter/missing"),
+              "counter.increment",
+              1,
+              "request-1");
+
+      try
+      {
+        static_cast<void>(manager->execute(command));
+        FAIL() << "expected an unknown session error";
+      }
+      catch (const Error &error)
+      {
+        EXPECT_EQ(error.code(), ErrorCode::SessionNotFound);
+      }
+
+      try
+      {
+        static_cast<void>(server.execute(command));
+        FAIL() << "expected an unknown session error";
+      }
+      catch (const Error &error)
+      {
+        EXPECT_EQ(error.code(), ErrorCode::SessionNotFound);
+      }
+    }
+
+    TEST(RoomManagerRoutingTest, RejectsCommandForExistingSessionOutsideRoom)
+    {
+      ManagerFixture fixture =
+          make_fixture();
+
+      ASSERT_NE(
+          open_room(
+              *fixture.manager,
+              make_room_id(),
+              "counter"),
+          nullptr);
+
+      static_cast<void>(
+          fixture.manager->create_session(
+              SessionId{
+                  std::string_view{
+                      "session-outside"}}));
+
+      JsonObject payload;
+      payload.set_i64("amount", 1);
+
+      const RoomCommand command{
+          make_room_id(),
+          SessionId{
+              std::string_view{
+                  "session-outside"}},
+          "counter.increment",
+          payload,
+          "request-1"};
+
+      try
+      {
+        static_cast<void>(
+            fixture.manager->execute(command));
+        FAIL() << "expected a missing membership error";
+      }
+      catch (const Error &error)
+      {
+        EXPECT_EQ(error.code(), ErrorCode::MembershipNotFound);
+      }
+    }
+
+    TEST(RoomManagerRoutingTest, RejectsCommandForClosedSession)
+    {
+      ManagerFixture fixture =
+          make_fixture();
+
+      ASSERT_NE(
+          open_room(
+              *fixture.manager,
+              make_room_id(),
+              "counter"),
+          nullptr);
+
+      static_cast<void>(
+          fixture.manager
+              ->require_session(
+                  make_session_id())
+              ->close());
+
+      try
+      {
+        static_cast<void>(
+            fixture.manager->execute(
+                make_command(
+                    make_room_id(),
+                    "counter.increment",
+                    1,
+                    "request-1")));
+        FAIL() << "expected an expired session error";
+      }
+      catch (const Error &error)
+      {
+        EXPECT_EQ(error.code(), ErrorCode::SessionExpired);
+      }
     }
 
     TEST(RoomManagerRoutingTest, ReturnsEventsProducedByRoom)

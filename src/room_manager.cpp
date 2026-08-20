@@ -1180,31 +1180,34 @@ namespace vix::realtime
   {
     command.validate();
 
+    SessionPtr session =
+        require_session(
+            command.session_id());
+
+    if (session->closed())
+    {
+      throw Error{
+          ErrorCode::SessionExpired,
+          "closed session cannot execute room commands"};
+    }
+
     RoomPtr room =
         require_room(
             command.room_id());
 
-    SessionPtr session =
-        find_session(
-            command.session_id());
-
-    if (session &&
-        (!session->has_room(
-             command.room_id()) ||
-         !room->has_session(
-             command.session_id())))
+    if (!session->has_room(
+            command.room_id()) ||
+        !room->has_session(
+            command.session_id()))
     {
       throw Error{
           ErrorCode::MembershipNotFound,
           "command session does not belong to the room"};
     }
 
-    if (session)
-    {
-      touch_presence(
-          command.room_id(),
-          command.session_id());
-    }
+    touch_presence(
+        command.room_id(),
+        command.session_id());
 
     return room->execute(command);
   }
@@ -1214,31 +1217,34 @@ namespace vix::realtime
   {
     command.validate();
 
+    SessionPtr session =
+        require_session(
+            command.session_id());
+
+    if (session->closed())
+    {
+      throw Error{
+          ErrorCode::SessionExpired,
+          "closed session cannot enqueue room commands"};
+    }
+
     RoomPtr room =
         require_room(
             command.room_id());
 
-    SessionPtr session =
-        find_session(
-            command.session_id());
-
-    if (session &&
-        (!session->has_room(
-             command.room_id()) ||
-         !room->has_session(
-             command.session_id())))
+    if (!session->has_room(
+            command.room_id()) ||
+        !room->has_session(
+            command.session_id()))
     {
       throw Error{
           ErrorCode::MembershipNotFound,
           "command session does not belong to the room"};
     }
 
-    if (session)
-    {
-      touch_presence(
-          command.room_id(),
-          command.session_id());
-    }
+    touch_presence(
+        command.room_id(),
+        command.session_id());
 
     return room->enqueue(
         std::move(command));
