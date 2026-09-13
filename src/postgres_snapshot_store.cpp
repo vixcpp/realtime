@@ -36,8 +36,7 @@
 #if (defined(VIX_REALTIME_WITH_POSTGRES) && VIX_REALTIME_WITH_POSTGRES) || \
     defined(VIX_REALTIME_ENABLE_POSTGRES) || \
     defined(VIX_REALTIME_HAS_POSTGRES) ||    \
-    defined(VIX_ENABLE_POSTGRES) ||          \
-    defined(VIX_DB_USE_POSTGRES)
+    defined(VIX_ENABLE_POSTGRES)
 
 #define VIX_REALTIME_POSTGRES_COMPILED 1
 

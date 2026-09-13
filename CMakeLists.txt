@@ -668,10 +668,12 @@ message(
   "WebSocket adapter:     ${VIX_REALTIME_WITH_WEBSOCKET}"
 )
 
-message(
-  STATUS
-  "PostgreSQL stores:     ${VIX_REALTIME_WITH_POSTGRES}"
-)
+if(VIX_REALTIME_WITH_POSTGRES)
+  message(
+    STATUS
+    "PostgreSQL stores:     ON"
+  )
+endif()
 
 message(
   STATUS
