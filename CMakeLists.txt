@@ -468,6 +468,9 @@ endif()
 target_compile_definitions(
   vix_realtime
   ${VIX_REALTIME_LINK_SCOPE}
+  # Realtime is currently built/exported as a static library.  Public API
+  # declarations must therefore not be marked dllimport in Windows consumers.
+  VIX_REALTIME_STATIC=1
   VIX_REALTIME_VERSION_MAJOR=${PROJECT_VERSION_MAJOR}
   VIX_REALTIME_VERSION_MINOR=${PROJECT_VERSION_MINOR}
   VIX_REALTIME_VERSION_PATCH=${PROJECT_VERSION_PATCH}
